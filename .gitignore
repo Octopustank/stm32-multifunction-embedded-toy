@@ -10,4 +10,4 @@ build/
 .codegraph/
 .codegraph
 .omo/
-
+compile_commands.json
