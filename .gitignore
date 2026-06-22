@@ -1,0 +1,13 @@
+build/
+*.o
+*.elf
+*.hex
+*.bin
+*.lst
+*.d
+*.map
+.DS_Store
+.codegraph/
+.codegraph
+.omo/
+
