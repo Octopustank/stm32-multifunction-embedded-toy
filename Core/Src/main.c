@@ -11,6 +11,7 @@
 #include "i2c.h"
 #include "ssd1306.h"
 #include "dht11.h"
+#include "adc.h"
 
 /* ---- LED & Key Definitions ---------------------------------------------- */
 
@@ -141,25 +142,23 @@ static void oled_thread_entry(void *param)
     DHT11_READ_DATA(&temp, &humi);  /* discard first reading after power-up */
 
     while (1) {
+        uint16_t light = adc_read();
         uint8_t result = DHT11_READ_DATA(&temp, &humi);
         if (result == 1) {
             int t_i = (int)temp, t_d = (int)((temp - t_i) * 10 + 0.5f);
             int h_i = (int)humi, h_d = (int)((humi - h_i) * 10 + 0.5f);
 
             snprintf(line1, sizeof(line1), "T:%d.%dC H:%d.%d%%", t_i, t_d, h_i, h_d);
-            line2[0] = '\0';
         } else {
             snprintf(line1, sizeof(line1), "err:%d no reply", result);
-            snprintf(line2, sizeof(line2), "VCC GND B5 ok?");
         }
+        snprintf(line2, sizeof(line2), "Light: %u", light);
 
         ssd1306_Fill(Black);
         ssd1306_SetCursor(0, 0);
         ssd1306_WriteString(line1, Font_7x10, White);
-        if (line2[0]) {
-            ssd1306_SetCursor(0, 16);
-            ssd1306_WriteString(line2, Font_7x10, White);
-        }
+        ssd1306_SetCursor(0, 16);
+        ssd1306_WriteString(line2, Font_7x10, White);
         ssd1306_UpdateScreen(&hi2c1);
 
         rt_thread_mdelay(2500);
@@ -242,6 +241,7 @@ int main(void)
 
     MX_I2C1_Init();
     ssd1306_Init(&hi2c1);
+    MX_ADC1_Init();
 
     ssd1306_Fill(Black);
     ssd1306_SetCursor(0, 0);
