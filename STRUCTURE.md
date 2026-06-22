@@ -27,7 +27,7 @@ Project-rttnano/
 │       ├── sysmem.c                # newlib _sbrk (RTT 接管后不再使用)
 │       └── syscalls.c              # newlib 系统调用桩
 │
-├── Libraries/                      # 外设驱动库 (从 Arch 引入)
+├── Libraries/                      # 外设驱动库 (从外部引入)
 │   ├── SSD1306/
 │   │   ├── ssd1306.h / .c          # SSD1306 OLED 驱动 (I2C, 128x64, 3 种字体)
 │   │   └── fonts.h / .c            # 字体位图数据 (7x10 / 11x18 / 16x26)
@@ -124,7 +124,7 @@ Project-rttnano/
 | main | 512B | 10 | 初始化外设、创建子线程 |
 | led | 512B | 10 | 自动模式: 流水灯 + 全闪动画 |
 | keys | 384B | 11 | 唯一硬件 PIN 读取者 / 模式切换 |
-| oled | 768B | 12 | DHT11 温湿度 + ADC 光照 → OLED 显示 (2.5s 刷新) |
+| oled | 1024B | 12 | DHT11 温湿度 + ADC 光照 → OLED 显示 (2.5s 刷新) |
 | idle | 自动 | 31 | RTT 内置空闲 |
 
 ## 关键设计决策
