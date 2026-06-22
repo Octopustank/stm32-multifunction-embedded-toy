@@ -36,6 +36,11 @@ Core/Src/stm32f1xx_hal_msp.c \
 Core/Src/system_stm32f1xx.c \
 Core/Src/sysmem.c \
 Core/Src/syscalls.c \
+Core/Src/i2c.c \
+Libraries/SSD1306/ssd1306.c \
+Libraries/SSD1306/fonts.c \
+Libraries/DHT11/dht11.c \
+Libraries/DHT11/delay.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_gpio_ex.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_rcc.c \
@@ -46,7 +51,8 @@ Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_cortex.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_pwr.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_flash.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_flash_ex.c \
-Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_exti.c
+Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_exti.c \
+Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_i2c.c
 
 # C sources — RT-Thread Nano kernel
 RTT_C_SOURCES =  \
@@ -120,6 +126,8 @@ AS_INCLUDES =
 # C includes — HAL + CMSIS
 C_INCLUDES =  \
 -ICore/Inc \
+-ILibraries/SSD1306 \
+-ILibraries/DHT11 \
 -IDrivers/STM32F1xx_HAL_Driver/Inc/Legacy \
 -IDrivers/STM32F1xx_HAL_Driver/Inc \
 -IDrivers/CMSIS/Device/ST/STM32F1xx/Include \

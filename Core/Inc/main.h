@@ -78,6 +78,10 @@ void SystemClock_Config(void);
 #define K4_DOWN_GPIO_Port GPIOB
 #define K5_CENTER_Pin     GPIO_PIN_1
 #define K5_CENTER_GPIO_Port GPIOB
+#define SCL_Pin           GPIO_PIN_8
+#define SCL_GPIO_Port     GPIOB
+#define SDA_Pin           GPIO_PIN_9
+#define SDA_GPIO_Port     GPIOB
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

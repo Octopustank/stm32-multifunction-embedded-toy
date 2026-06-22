@@ -34,13 +34,6 @@ Project-rttnano/
 │
 ├── Middlewares/                    # 中间件层
 │   └── RT-Thread/                  # RT-Thread Nano v3.1.x
-│       ├── include/                # 内核头文件（rtthread.h, rtdef.h, rthw.h…）
-│       ├── *.c                     # 内核源码（13 个编译文件，4 个未启用）
-│       └── libcpu/arm/cortex-m3/   # Cortex-M3 移植层
-│           ├── cpuport.c           # 中断开关、HardFault 处理、栈初始化
-│           ├── context_gcc.S       # PendSV 上下文切换（GCC 汇编）
-│           ├── context_iar.S       # （IAR 备用）
-│           └── context_rvds.S      # （MDK 备用）
 │
 ├── startup_stm32f103xb.s           # 启动文件（修改：bl main → bl entry）
 ├── STM32F103XX_FLASH.ld            # 链接脚本（Flash 64K @ 0x08000000, RAM 20K @ 0x20000000）
