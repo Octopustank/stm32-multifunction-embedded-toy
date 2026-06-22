@@ -251,7 +251,7 @@ int main(void)
     rt_thread_t tid = rt_thread_create("oled",
                                         oled_thread_entry,
                                         RT_NULL,
-                                        768, 12, 10);
+                                        1024, 12, 10);
     if (tid != RT_NULL)
         rt_thread_startup(tid);
 
