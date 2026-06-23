@@ -13,6 +13,7 @@
  */
 #include <rtthread.h>
 #include <stdio.h>
+#include <string.h>
 #include "main.h"
 #include "gpio.h"
 #include "i2c.h"
@@ -21,6 +22,7 @@
 #include "adc.h"
 #include "tim.h"
 #include "HCSR04.h"
+#include "usart.h"
 
 /* ---- LED Definitions ----------------------------------------------------- */
 
@@ -71,6 +73,7 @@ static void led_thread_entry(void *param);
 static void key_thread_entry(void *param);
 static void sensor_thread_entry(void *param);
 static void oled_thread_entry(void *param);
+static void shell_thread_entry(void *param);
 
 /* ---- Helpers ------------------------------------------------------------- */
 
@@ -278,14 +281,88 @@ static void oled_thread_entry(void *param)
     }
 }
 
-/* ---- Application Entry --------------------------------------------------- */
+/* ---- Shell Thread (UART command parser) ---------------------------------- */
 
+static void shell_thread_entry(void *param)
+{
+    static char cmd[32];
+    static uint8_t pos;
+
+    uart_puts("\r\nrtt> ");
+
+    while (1) {
+        int c = uart_getc();
+        if (c < 0) { rt_thread_mdelay(20); continue; }
+
+        /* echo + backspace handling */
+        if (c == '\b' || c == 127) {
+            if (pos > 0) { uart_puts("\b \b"); pos--; }
+            continue;
+        }
+        uart_putc((char)c);
+
+        if (c == '\r' || c == '\n') {
+            cmd[pos] = '\0';
+            uart_puts("\r\n");
+
+            if (pos == 0) { uart_puts("rtt> "); pos = 0; continue; }
+
+            /* parse command */
+            if      (!strcmp(cmd, "help")) uart_puts("help temp humi light dist stat led on|off\r\n");
+            else if (!strcmp(cmd, "stat")) {
+                rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
+                struct SensorData local = sensor_data;
+                rt_mutex_release(&sensor_mutex);
+                char buf[64];
+                snprintf(buf, sizeof(buf), "T:%.1fC H:%.1f%% Light:%u Dist:%ucm ok:%d\r\n",
+                         (double)local.temp, (double)local.humi,
+                         local.light, local.distance, local.is_valid);
+                uart_puts(buf);
+            }
+            else if (!strcmp(cmd, "temp")) {
+                rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
+                float t = sensor_data.temp;
+                rt_mutex_release(&sensor_mutex);
+                char buf[16]; snprintf(buf, sizeof(buf), "%.1f C\r\n", (double)t); uart_puts(buf);
+            }
+            else if (!strcmp(cmd, "humi")) {
+                rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
+                float h = sensor_data.humi;
+                rt_mutex_release(&sensor_mutex);
+                char buf[16]; snprintf(buf, sizeof(buf), "%.1f %%\r\n", (double)h); uart_puts(buf);
+            }
+            else if (!strcmp(cmd, "light")) {
+                rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
+                uint16_t l = sensor_data.light;
+                rt_mutex_release(&sensor_mutex);
+                char buf[16]; snprintf(buf, sizeof(buf), "%u\r\n", l); uart_puts(buf);
+            }
+            else if (!strcmp(cmd, "dist")) {
+                rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
+                uint16_t d = sensor_data.distance;
+                rt_mutex_release(&sensor_mutex);
+                char buf[16]; snprintf(buf, sizeof(buf), "%u cm\r\n", d); uart_puts(buf);
+            }
+            else if (!strcmp(cmd, "led on"))  { auto_mode = 1; cur_led = 0; all_leds_off(); uart_puts("ok\r\n"); }
+            else if (!strcmp(cmd, "led off")) { auto_mode = 0; cur_led = 0; all_leds_off(); uart_puts("ok\r\n"); }
+            else { uart_puts("? try: help\r\n"); }
+
+            pos = 0;
+            uart_puts("rtt> ");
+        } else if (pos < sizeof(cmd) - 1) {
+            cmd[pos++] = (char)c;
+        }
+    }
+}
+
+/* ---- Application Entry --------------------------------------------------- */
 int main(void)
 {
     MX_GPIO_Init();
     MX_I2C1_Init();
     ssd1306_Init(&hi2c1);
     MX_ADC1_Init();
+    MX_USART2_UART_Init();
 
     /* SR04 Trig pin (PB6): output push-pull */
     {
@@ -323,6 +400,8 @@ int main(void)
     tid = rt_thread_create("led",  led_thread_entry,    RT_NULL, 512,  11, 10);
     if (tid) rt_thread_startup(tid);
     tid = rt_thread_create("keys", key_thread_entry,    RT_NULL, 384,  10, 10);
+    if (tid) rt_thread_startup(tid);
+    tid = rt_thread_create("shell", shell_thread_entry,  RT_NULL, 768,  15, 10);
     if (tid) rt_thread_startup(tid);
 
     while (1) rt_thread_mdelay(1000);

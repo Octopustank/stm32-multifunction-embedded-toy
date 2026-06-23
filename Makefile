@@ -39,6 +39,7 @@ Core/Src/syscalls.c \
 Core/Src/i2c.c \
 Core/Src/adc.c \
 Core/Src/tim.c \
+Core/Src/usart.c \
 Libraries/SSD1306/ssd1306.c \
 Libraries/SSD1306/fonts.c \
 Libraries/DHT11/dht11.c \
@@ -58,7 +59,8 @@ Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_exti.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_i2c.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_adc.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_tim.c \
-Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_tim_ex.c
+Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_tim_ex.c \
+Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_uart.c
 
 # C sources — RT-Thread Nano kernel
 RTT_C_SOURCES =  \

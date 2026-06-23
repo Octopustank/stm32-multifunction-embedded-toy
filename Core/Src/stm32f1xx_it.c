@@ -22,6 +22,7 @@
 #include "stm32f1xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "usart.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -175,5 +176,10 @@ void DebugMon_Handler(void)
 /******************************************************************************/
 
 /* USER CODE BEGIN 1 */
+
+void USART2_IRQHandler(void)
+{
+    HAL_UART_IRQHandler(&huart2);
+}
 
 /* USER CODE END 1 */
