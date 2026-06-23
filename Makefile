@@ -47,6 +47,7 @@ Libraries/DHT11/delay.c \
 Libraries/SR04/HCSR04.c \
 Libraries/ESP8266_MQTT/esp8266_mqtt.c \
 Libraries/MAX7219/max7219.c \
+Libraries/SNAKE/snake.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_gpio_ex.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_rcc.c \
@@ -141,6 +142,7 @@ C_INCLUDES =  \
 -ILibraries/SR04 \
 -ILibraries/ESP8266_MQTT \
 -ILibraries/MAX7219 \
+-ILibraries/SNAKE \
 -IDrivers/STM32F1xx_HAL_Driver/Inc/Legacy \
 -IDrivers/STM32F1xx_HAL_Driver/Inc \
 -IDrivers/CMSIS/Device/ST/STM32F1xx/Include \

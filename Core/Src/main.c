@@ -25,6 +25,7 @@
 #include "usart.h"
 #include "esp8266_mqtt.h"
 #include "max7219.h"
+#include "snake.h"
 
 /* ---- LED Definitions ----------------------------------------------------- */
 
@@ -69,6 +70,11 @@ static struct rt_semaphore   key_sem;      /* CENTER key → LED thread */
 static int auto_mode = 1;
 static int cur_led   = 0;
 
+/* ---- Game State ---------------------------------------------------------- */
+
+static int         game_mode;   /* 0=idle, 1=playing, 2=dead */
+static snake_dir_t g_dir;       /* input from key thread */
+
 /* ---- MQTT State ---------------------------------------------------------- */
 
 static char mqtt_ssid[32], mqtt_pwd[32];
@@ -83,6 +89,7 @@ static void sensor_thread_entry(void *param);
 static void oled_thread_entry(void *param);
 static void shell_thread_entry(void *param);
 static void mqtt_thread_entry(void *param);
+static void game_thread_entry(void *param);
 
 /* ---- Helpers ------------------------------------------------------------- */
 
@@ -184,6 +191,28 @@ static void led_thread_entry(void *param)
 static void key_thread_entry(void *param)
 {
     while (1) {
+        /* ---- game-mode keys ---- */
+        if (game_mode == 1) {
+            if (key_pressed(K1_LEFT_GPIO_Port,  K1_LEFT_Pin))  g_dir = DIR_LEFT;
+            if (key_pressed(K2_RIGHT_GPIO_Port, K2_RIGHT_Pin)) g_dir = DIR_RIGHT;
+            if (key_pressed(K3_UP_GPIO_Port,    K3_UP_Pin))    g_dir = DIR_UP;
+            if (key_pressed(K4_DOWN_GPIO_Port,  K4_DOWN_Pin))  g_dir = DIR_DOWN;
+            if (key_pressed(K5_CENTER_GPIO_Port, K5_CENTER_Pin)) game_mode = 0;
+            rt_thread_mdelay(10);
+            continue;
+        }
+        if (game_mode == 2) {
+            if (key_pressed(K5_CENTER_GPIO_Port, K5_CENTER_Pin))
+                { snake_init(); game_mode = 1; }
+            if (key_pressed(K3_UP_GPIO_Port, K3_UP_Pin))
+                game_mode = 0;
+            rt_thread_mdelay(10);
+            continue;
+        }
+
+        /* ---- normal-mode keys ---- */
+        if (key_pressed(K3_UP_GPIO_Port, K3_UP_Pin))
+            { game_mode = 1; snake_init(); continue; }
         if (key_pressed(K5_CENTER_GPIO_Port, K5_CENTER_Pin)) {
             if (auto_mode) {
                 rt_sem_release(&key_sem);
@@ -551,6 +580,48 @@ static void mqtt_thread_entry(void *param)
     }
 }
 
+/* ---- Game Thread (snake on MAX7219) -------------------------------------- */
+
+static void game_thread_entry(void *param)
+{
+    const uint8_t smiley[8] = {
+        0x00, 0x24, 0x24, 0x00, 0x00, 0x42, 0x3C, 0x00
+    };
+    static int prev_mode;
+
+    while (1) {
+        if (!game_mode) {
+            if (prev_mode) { max7219_display(smiley); prev_mode = 0; }
+            rt_thread_mdelay(100);
+            continue;
+        }
+        prev_mode = game_mode;
+
+        if (game_mode == 1) {
+            snake_tick(g_dir);
+            g_dir = DIR_NONE;
+
+            uint8_t rows[8];
+            snake_get_display(rows);
+            max7219_display(rows);
+
+            if (snake_is_dead()) game_mode = 2;
+            rt_thread_mdelay(snake_get_speed_ms());
+            continue;
+        }
+
+        if (game_mode == 2) {
+            const uint8_t all[8]  = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+            const uint8_t none[8] = {0,0,0,0,0,0,0,0};
+            for (int i = 0; i < 3; i++) {
+                max7219_display(all);  rt_thread_mdelay(150);
+                max7219_display(none); rt_thread_mdelay(150);
+            }
+            rt_thread_mdelay(500);
+        }
+    }
+}
+
 /* ---- Application Entry --------------------------------------------------- */
 int main(void)
 {
@@ -602,25 +673,6 @@ int main(void)
     ssd1306_WriteString("Nano v3.1", Font_7x10, White);
     ssd1306_UpdateScreen(&hi2c1);
     rt_thread_mdelay(1500);
-
-    /* MAX7219: quick self-test — all LEDs on for 500ms */
-    const uint8_t all_on[8] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
-    max7219_display(all_on);
-    rt_thread_mdelay(500);
-
-    /* smiley face */
-    const uint8_t smiley[8] = {
-        0x00,   /* ........ */
-        0x24,   /* ..#..#.. */
-        0x24,   /* ..#..#.. */
-        0x00,   /* ........ */
-        0x00,   /* ........ */
-        0x42,   /* .#....#. */
-        0x3C,   /* ..####.. */
-        0x00,   /* ........ */
-    };
-    max7219_display(smiley);
-
     ssd1306_Fill(Black);
     ssd1306_SetCursor(22, 20);
     ssd1306_WriteString("Init...", Font_11x18, White);
@@ -638,6 +690,8 @@ int main(void)
     tid = rt_thread_create("shell", shell_thread_entry,  RT_NULL, 768,  15, 10);
     if (tid) rt_thread_startup(tid);
     tid = rt_thread_create("mqtt",  mqtt_thread_entry,   RT_NULL, 1024, 14, 10);
+    if (tid) rt_thread_startup(tid);
+    tid = rt_thread_create("game",  game_thread_entry,   RT_NULL, 640,   9, 10);
     if (tid) rt_thread_startup(tid);
 
     while (1) rt_thread_mdelay(1000);
