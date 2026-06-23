@@ -60,5 +60,5 @@ void max7219_init(void)
 void max7219_display(const uint8_t pattern[8])
 {
     for (int i = 0; i < 8; i++)
-        max7219_send16(MAX7219_REG_DIGIT1 + i, pattern[i]);
+        max7219_send16(MAX7219_REG_DIGIT1 + i, pattern[7 - i]);
 }
