@@ -299,6 +299,7 @@ int main(void)
     }
 
     MX_TIM4_Init();
+    HAL_TIM_Base_Start_IT(&htim4);             /* start timer counter */
     HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_2);
     __HAL_TIM_ENABLE_IT(&htim4, TIM_IT_UPDATE);  /* overflow interrupt */
 
