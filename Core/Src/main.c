@@ -202,9 +202,9 @@ static void key_thread_entry(void *param)
             continue;
         }
         if (game_mode == 2) {
-            if (key_pressed(K5_CENTER_GPIO_Port, K5_CENTER_Pin))
-                { snake_init(); game_mode = 1; }
             if (key_pressed(K3_UP_GPIO_Port, K3_UP_Pin))
+                { snake_init(); game_mode = 1; }
+            if (key_pressed(K5_CENTER_GPIO_Port, K5_CENTER_Pin))
                 game_mode = 0;
             rt_thread_mdelay(10);
             continue;

@@ -77,11 +77,12 @@ void snake_tick(snake_dir_t dir)
         default: break;
     }
 
-    /* wrap around edges */
-    if (head.x < 0) head.x = 7;
-    if (head.x > 7) head.x = 0;
-    if (head.y < 0) head.y = 7;
-    if (head.y > 7) head.y = 0;
+    /* hit wall → dead */
+    if (head.x < 0 || head.x > 7 || head.y < 0 || head.y > 7) {
+        dead = 1;
+        if (score > high_score) high_score = score;
+        return;
+    }
 
     /* self-collision */
     if (on_body(head.x, head.y)) {
@@ -127,6 +128,6 @@ int  snake_get_high(void)  { return high_score; }
 
 int snake_get_speed_ms(void)
 {
-    int s = 300 - score * 20;
-    return s < 60 ? 60 : s;
+    int s = 500 - score * 30;
+    return s < 150 ? 150 : s;
 }
