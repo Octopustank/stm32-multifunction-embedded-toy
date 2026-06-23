@@ -1,6 +1,13 @@
 /*
  * main.c - Application entry (runs as RT-Thread main thread)
  *
+ * Architecture (Blackboard Pattern):
+ *   sensor_thread (prio 8)  → sensor_data (mutex) ← oled_thread (prio 12)
+ *                                   ↕ semaphore
+ *                            future: mqtt_thread
+ *
+ *   key_thread (prio 10)   → key_sem  → led_thread (prio 11)
+ *
  * Startup flow:
  *   startup.s → entry() → rtthread_startup() → main()
  */
@@ -13,7 +20,7 @@
 #include "dht11.h"
 #include "adc.h"
 
-/* ---- LED & Key Definitions ---------------------------------------------- */
+/* ---- LED Definitions ----------------------------------------------------- */
 
 typedef struct {
     GPIO_TypeDef *port;
@@ -31,24 +38,38 @@ static const LED_t leds[] = {
 #define WATERFALL_DELAY    300
 #define BLINK_DELAY        250
 #define CYCLE_COUNT          2
-#define POLL_TICK           10
 
 #define LED_ON    GPIO_PIN_RESET
 #define LED_OFF   GPIO_PIN_SET
 
-/* ---- Shared State ------------------------------------------------------- */
+/* ---- Sensor Data (Blackboard) -------------------------------------------- */
 
-static volatile rt_bool_t auto_mode      = RT_TRUE;
-static volatile int8_t    cur_led        = 0;
-static volatile rt_bool_t center_pressed = RT_FALSE;
+struct SensorData {
+    float    temp;
+    float    humi;
+    uint16_t light;
+    uint8_t  is_valid;   /* 1=OK, 0=stale, 2=hw fault */
+};
 
-/* ---- Forward Declarations ----------------------------------------------- */
+static struct SensorData     sensor_data;
+static struct rt_mutex       sensor_mutex;
+static struct rt_mutex       i2c_mutex;
+static struct rt_semaphore   sensor_sem;   /* notify OLED consumer */
+static struct rt_semaphore   key_sem;      /* CENTER key → LED thread */
+
+/* ---- Thread State -------------------------------------------------------- */
+
+static int auto_mode = 1;
+static int cur_led   = 0;
+
+/* ---- Forward Declarations ------------------------------------------------ */
 
 static void led_thread_entry(void *param);
 static void key_thread_entry(void *param);
+static void sensor_thread_entry(void *param);
 static void oled_thread_entry(void *param);
 
-/* ---- Helpers ------------------------------------------------------------ */
+/* ---- Helpers ------------------------------------------------------------- */
 
 static void all_leds_off(void)
 {
@@ -63,53 +84,45 @@ static void set_led(uint8_t idx)
 }
 
 /*
- * key_pressed: blocking key detection with debounce.
- * Only called from key_thread (priority 11).
- * Returns RT_TRUE after a confirmed press-and-release.
+ * Non-blocking key-press detector (falling-edge with debounce).
+ * Does NOT wait for release — other keys remain responsive.
  */
 static rt_bool_t key_pressed(GPIO_TypeDef *port, uint16_t pin)
 {
-    if (HAL_GPIO_ReadPin(port, pin) != GPIO_PIN_RESET)
-        return RT_FALSE;
-    rt_thread_mdelay(20);
-    if (HAL_GPIO_ReadPin(port, pin) != GPIO_PIN_RESET)
-        return RT_FALSE;
-    while (HAL_GPIO_ReadPin(port, pin) == GPIO_PIN_RESET)
-        rt_thread_mdelay(5);
-    return RT_TRUE;
-}
+    static uint8_t prev[5];
+    uint8_t idx;
 
-/*
- * delay_yield: non-blocking delay that yields to other threads.
- * Returns RT_TRUE if center_pressed flag was set by key thread.
- */
-static rt_bool_t delay_yield(uint32_t ms)
-{
-    for (uint32_t t = 0; t < ms; t += POLL_TICK) {
-        uint32_t step = (ms - t < POLL_TICK) ? (ms - t) : POLL_TICK;
-        rt_thread_mdelay(step);
-        if (center_pressed) {
-            center_pressed = RT_FALSE;
+    if      (port == K1_LEFT_GPIO_Port   && pin == K1_LEFT_Pin)   idx = 0;
+    else if (port == K2_RIGHT_GPIO_Port  && pin == K2_RIGHT_Pin)  idx = 1;
+    else if (port == K3_UP_GPIO_Port     && pin == K3_UP_Pin)     idx = 2;
+    else if (port == K4_DOWN_GPIO_Port   && pin == K4_DOWN_Pin)   idx = 3;
+    else if (port == K5_CENTER_GPIO_Port && pin == K5_CENTER_Pin) idx = 4;
+    else return RT_FALSE;
+
+    uint8_t cur = (HAL_GPIO_ReadPin(port, pin) == GPIO_PIN_RESET) ? 1 : 0;
+    if (cur && !prev[idx]) {
+        rt_thread_mdelay(20);
+        if (HAL_GPIO_ReadPin(port, pin) == GPIO_PIN_RESET) {
+            prev[idx] = 1;
             return RT_TRUE;
         }
     }
+    if (!cur) prev[idx] = 0;
     return RT_FALSE;
 }
 
-/*
- * LED animation helpers — use delay_yield instead of direct pin polling.
- * Only the key thread reads hardware pins.
- */
+/* ---- LED Animations (semaphore-driven) ----------------------------------- */
+
 static rt_bool_t waterfall_once(void)
 {
     for (uint8_t i = 0; i < LED_NUM; i++) {
         HAL_GPIO_WritePin(leds[i].port, leds[i].pin, LED_ON);
-        if (delay_yield(WATERFALL_DELAY)) return RT_TRUE;
+        if (rt_sem_take(&key_sem, WATERFALL_DELAY) == RT_EOK) return RT_TRUE;
         HAL_GPIO_WritePin(leds[i].port, leds[i].pin, LED_OFF);
     }
     for (uint8_t i = LED_NUM - 2; i > 0; i--) {
         HAL_GPIO_WritePin(leds[i].port, leds[i].pin, LED_ON);
-        if (delay_yield(WATERFALL_DELAY)) return RT_TRUE;
+        if (rt_sem_take(&key_sem, WATERFALL_DELAY) == RT_EOK) return RT_TRUE;
         HAL_GPIO_WritePin(leds[i].port, leds[i].pin, LED_OFF);
     }
     return RT_FALSE;
@@ -120,52 +133,17 @@ static rt_bool_t blink_all(uint8_t times)
     for (uint8_t t = 0; t < times; t++) {
         for (uint8_t i = 0; i < LED_NUM; i++)
             HAL_GPIO_WritePin(leds[i].port, leds[i].pin, LED_ON);
-        if (delay_yield(BLINK_DELAY)) return RT_TRUE;
+        if (rt_sem_take(&key_sem, BLINK_DELAY) == RT_EOK) return RT_TRUE;
         for (uint8_t i = 0; i < LED_NUM; i++)
             HAL_GPIO_WritePin(leds[i].port, leds[i].pin, LED_OFF);
-        if (t < times - 1) {
-            if (delay_yield(BLINK_DELAY)) return RT_TRUE;
-        }
+        if (t < times - 1 && rt_sem_take(&key_sem, BLINK_DELAY) == RT_EOK)
+            return RT_TRUE;
     }
-    if (delay_yield(400)) return RT_TRUE;
+    if (rt_sem_take(&key_sem, 400) == RT_EOK) return RT_TRUE;
     return RT_FALSE;
 }
 
-/* ---- OLED + DHT11 Display Thread ---------------------------------------- */
-
-static void oled_thread_entry(void *param)
-{
-    float temp = 0, humi = 0;
-    char line1[32], line2[32];
-
-    rt_thread_mdelay(2000);
-    DHT11_READ_DATA(&temp, &humi);  /* discard first reading after power-up */
-
-    while (1) {
-        uint16_t light = adc_read();
-        uint8_t result = DHT11_READ_DATA(&temp, &humi);
-        if (result == 1) {
-            int t_i = (int)temp, t_d = (int)((temp - t_i) * 10 + 0.5f);
-            int h_i = (int)humi, h_d = (int)((humi - h_i) * 10 + 0.5f);
-
-            snprintf(line1, sizeof(line1), "T:%d.%dC H:%d.%d%%", t_i, t_d, h_i, h_d);
-        } else {
-            snprintf(line1, sizeof(line1), "err:%d no reply", result);
-        }
-        snprintf(line2, sizeof(line2), "Light: %u", light);
-
-        ssd1306_Fill(Black);
-        ssd1306_SetCursor(0, 0);
-        ssd1306_WriteString(line1, Font_7x10, White);
-        ssd1306_SetCursor(0, 16);
-        ssd1306_WriteString(line2, Font_7x10, White);
-        ssd1306_UpdateScreen(&hi2c1);
-
-        rt_thread_mdelay(2500);
-    }
-}
-
-/* ---- LED Animation Thread ----------------------------------------------- */
+/* ---- LED Thread (prio 11) ------------------------------------------------ */
 
 static void led_thread_entry(void *param)
 {
@@ -174,10 +152,9 @@ static void led_thread_entry(void *param)
             rt_bool_t stopped = RT_FALSE;
             for (uint8_t cycle = 0; cycle < CYCLE_COUNT && !stopped; cycle++)
                 stopped = waterfall_once();
-            if (!stopped)
-                blink_all(2);
+            if (!stopped) blink_all(2);
             if (stopped) {
-                auto_mode = RT_FALSE;
+                auto_mode = 0;
                 cur_led = 0;
                 all_leds_off();
             }
@@ -187,92 +164,142 @@ static void led_thread_entry(void *param)
     }
 }
 
-/* ---- Key Scan Thread ----------------------------------------------------
+/* ---- Key Thread (prio 10) ------------------------------------------------ */
 
- * This thread is the SINGLE owner of hardware pin reading.
- * LED thread only reads the center_pressed flag.
- */
 static void key_thread_entry(void *param)
 {
     while (1) {
         if (key_pressed(K5_CENTER_GPIO_Port, K5_CENTER_Pin)) {
             if (auto_mode) {
-                /*
-                 * Auto mode: signal LED thread via flag.
-                 * LED thread will stop the animation and flip auto_mode to FALSE.
-                 */
-                center_pressed = RT_TRUE;
+                rt_sem_release(&key_sem);
             } else {
-                /*
-                 * Manual mode: toggle to auto directly.
-                 * LED thread will see auto_mode == TRUE on its next loop.
-                 */
-                auto_mode = RT_TRUE;
+                auto_mode = 1;
                 cur_led = 0;
                 all_leds_off();
             }
         }
-
         if (!auto_mode) {
             int8_t key = 0;
-
-            if (key_pressed(K1_LEFT_GPIO_Port, K1_LEFT_Pin))   key = 1;
+            if (key_pressed(K1_LEFT_GPIO_Port,  K1_LEFT_Pin))  key = 1;
             if (key_pressed(K2_RIGHT_GPIO_Port, K2_RIGHT_Pin)) key = 2;
-            if (key_pressed(K3_UP_GPIO_Port, K3_UP_Pin))       key = 3;
-            if (key_pressed(K4_DOWN_GPIO_Port, K4_DOWN_Pin))   key = 4;
+            if (key_pressed(K3_UP_GPIO_Port,    K3_UP_Pin))    key = 3;
+            if (key_pressed(K4_DOWN_GPIO_Port,  K4_DOWN_Pin))  key = 4;
 
             if (key == 1 || key == 3)
-                cur_led = (cur_led == 0) ? (int8_t)(LED_NUM - 1) : cur_led - 1;
+                cur_led = (cur_led == 0) ? (int)(LED_NUM - 1) : cur_led - 1;
             if (key == 2 || key == 4)
                 cur_led = (cur_led + 1) % LED_NUM;
-            if (key != 0)
-                set_led((uint8_t)cur_led);
+            if (key != 0) set_led((uint8_t)cur_led);
         }
-
         rt_thread_mdelay(10);
     }
 }
 
-/* ---- Application Entry (RTT main thread) -------------------------------- */
+/* ---- Sensor Thread (producer, prio 8) ------------------------------------ */
+
+static void sensor_thread_entry(void *param)
+{
+    float temp, humi;
+    static float last_temp, last_humi;
+    static uint8_t fail_count;
+
+    rt_thread_mdelay(2000);   /* DHT11 warm-up */
+
+    while (1) {
+        uint8_t result = DHT11_READ_DATA(&temp, &humi);
+        uint16_t light = adc_read();
+
+        rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
+        sensor_data.light = light;
+
+        if (result == 1) {
+            last_temp  = temp;
+            last_humi  = humi;
+            fail_count = 0;
+            sensor_data.temp     = temp;
+            sensor_data.humi     = humi;
+            sensor_data.is_valid = 1;
+        } else {
+            fail_count++;
+            sensor_data.temp     = last_temp;
+            sensor_data.humi     = last_humi;
+            sensor_data.is_valid = (fail_count > 10) ? 2 : 0;
+        }
+        rt_mutex_release(&sensor_mutex);
+
+        rt_sem_release(&sensor_sem);
+        rt_thread_mdelay(800);
+    }
+}
+
+/* ---- OLED Thread (consumer, prio 12) ------------------------------------- */
+
+static void oled_thread_entry(void *param)
+{
+    char line1[32], line2[32];
+    rt_thread_mdelay(2000);
+
+    while (1) {
+        rt_sem_take(&sensor_sem, RT_WAITING_FOREVER);
+
+        rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
+        struct SensorData local = sensor_data;
+        rt_mutex_release(&sensor_mutex);
+
+        if (local.is_valid == 1) {
+            int t_i = (int)local.temp, t_d = (int)((local.temp - t_i) * 10 + 0.5f);
+            int h_i = (int)local.humi, h_d = (int)((local.humi - h_i) * 10 + 0.5f);
+            snprintf(line1, sizeof(line1), "T:%d.%dC H:%d.%d%%", t_i, t_d, h_i, h_d);
+        } else if (local.is_valid == 0) {
+            snprintf(line1, sizeof(line1), "reading...");
+        } else {
+            snprintf(line1, sizeof(line1), "DHT11 fault!");
+        }
+        snprintf(line2, sizeof(line2), "Light: %u", local.light);
+
+        rt_mutex_take(&i2c_mutex, RT_WAITING_FOREVER);
+        ssd1306_Fill(Black);
+        ssd1306_SetCursor(0, 0);
+        ssd1306_WriteString(line1, Font_7x10, White);
+        ssd1306_SetCursor(0, 16);
+        ssd1306_WriteString(line2, Font_7x10, White);
+        ssd1306_UpdateScreen(&hi2c1);
+        rt_mutex_release(&i2c_mutex);
+    }
+}
+
+/* ---- Application Entry --------------------------------------------------- */
 
 int main(void)
 {
     MX_GPIO_Init();
-
     MX_I2C1_Init();
     ssd1306_Init(&hi2c1);
     MX_ADC1_Init();
 
+    /* kernel objects (static init — no heap frag) */
+    rt_mutex_init(&sensor_mutex, "s_mtx", RT_IPC_FLAG_FIFO);
+    rt_mutex_init(&i2c_mutex,    "i_mtx", RT_IPC_FLAG_FIFO);
+    rt_sem_init(&sensor_sem, "s_sem", 0, RT_IPC_FLAG_FIFO);
+    rt_sem_init(&key_sem,    "k_sem", 0, RT_IPC_FLAG_FIFO);
+
+    /* splash screen */
     ssd1306_Fill(Black);
     ssd1306_SetCursor(0, 0);
-    ssd1306_WriteString("DHT11 init...", Font_11x18, White);
+    ssd1306_WriteString("Init...", Font_7x10, White);
     ssd1306_UpdateScreen(&hi2c1);
 
-    rt_thread_t tid = rt_thread_create("oled",
-                                        oled_thread_entry,
-                                        RT_NULL,
-                                        1024, 12, 10);
-    if (tid != RT_NULL)
-        rt_thread_startup(tid);
+    rt_thread_t tid;
+    tid = rt_thread_create("sens", sensor_thread_entry, RT_NULL, 768,  8, 10);
+    if (tid) rt_thread_startup(tid);
+    tid = rt_thread_create("oled", oled_thread_entry,   RT_NULL, 1024, 12, 10);
+    if (tid) rt_thread_startup(tid);
+    tid = rt_thread_create("led",  led_thread_entry,    RT_NULL, 512,  11, 10);
+    if (tid) rt_thread_startup(tid);
+    tid = rt_thread_create("keys", key_thread_entry,    RT_NULL, 384,  10, 10);
+    if (tid) rt_thread_startup(tid);
 
-    tid = rt_thread_create("led",
-                                        led_thread_entry,
-                                        RT_NULL,
-                                        512, 10, 10);
-    if (tid != RT_NULL)
-        rt_thread_startup(tid);
-
-    tid = rt_thread_create("keys",
-                           key_thread_entry,
-                           RT_NULL,
-                           384, 11, 10);
-    if (tid != RT_NULL)
-        rt_thread_startup(tid);
-
-    while (1) {
-        rt_thread_mdelay(1000);
-    }
-
+    while (1) rt_thread_mdelay(1000);
     return RT_EOK;
 }
 

@@ -19,6 +19,7 @@
 
 /* ========== IPC ========== */
 #define RT_USING_SEMAPHORE
+#define RT_USING_MUTEX
 
 /* ========== Memory ========== */
 #define RT_USING_HEAP
