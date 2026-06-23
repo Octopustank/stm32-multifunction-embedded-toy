@@ -74,6 +74,7 @@ static int cur_led   = 0;
 
 static int         game_mode;   /* 0=idle, 1=playing, 2=dead */
 static snake_dir_t g_dir;       /* input from key thread */
+static int         g_serial_snake; /* serial input mode */
 
 /* ---- MQTT State ---------------------------------------------------------- */
 
@@ -327,7 +328,7 @@ static void oled_thread_entry(void *param)
 
 static const char *shell_cmds[] = {
     "help", "temp", "humi", "light", "dist", "stat",
-    "led on", "led off", NULL
+    "led on", "led off", "snake", NULL
 };
 
 static void shell_thread_entry(void *param)
@@ -452,7 +453,7 @@ static void shell_thread_entry(void *param)
             hist_cur = 0;
 
             /* ---- command dispatch ---- */
-            if      (!strcmp(cmd, "help")) uart_puts("help temp humi light dist stat led on|off\r\nwifi ssid pwd   mqtt ip port id   pub\r\n");
+            if      (!strcmp(cmd, "help")) uart_puts("help temp humi light dist stat led on|off snake\r\nwifi ssid pwd   mqtt ip port id   pub\r\n");
             else if (!strcmp(cmd, "stat")) {
                 rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
                 struct SensorData local = sensor_data;
@@ -494,6 +495,7 @@ static void shell_thread_entry(void *param)
             }
             else if (!strcmp(cmd, "led on"))  { auto_mode = 1; cur_led = 0; all_leds_off(); uart_puts("ok\r\n"); }
             else if (!strcmp(cmd, "led off")) { auto_mode = 0; cur_led = 0; all_leds_off(); uart_puts("ok\r\n"); }
+            else if (!strcmp(cmd, "snake"))  { snake_init(); game_mode = 1; g_serial_snake = 1; uart_puts("WASD=move Enter=end Ctrl+C=abort\r\n"); }
             else if (!strncmp(cmd, "wifi ", 5)) {
                 char *sp = strchr(cmd + 5, ' ');
                 if (!sp) { uart_puts("usage: wifi ssid password\r\n"); goto prompt; }
@@ -598,6 +600,20 @@ static void game_thread_entry(void *param)
         prev_mode = game_mode;
 
         if (game_mode == 1) {
+            /* serial input: poll for WASD / arrows / Ctrl+C / Enter */
+            if (g_serial_snake) {
+                int c;
+                while ((c = uart_getc()) >= 0) {
+                    if (c == 0x03)      { game_mode = 0; break; }       /* Ctrl+C */
+                    if (c == '\r' || c == '\n') { game_mode = 0; break; }
+                    if (c == 'w' || c == 'W') g_dir = DIR_UP;
+                    if (c == 's' || c == 'S') g_dir = DIR_DOWN;
+                    if (c == 'a' || c == 'A') g_dir = DIR_LEFT;
+                    if (c == 'd' || c == 'D') g_dir = DIR_RIGHT;
+                }
+                if (!game_mode) { g_serial_snake = 0; continue; }
+            }
+
             snake_tick(g_dir);
             g_dir = DIR_NONE;
 
