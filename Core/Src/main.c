@@ -314,8 +314,10 @@ static void shell_thread_entry(void *param)
                 struct SensorData local = sensor_data;
                 rt_mutex_release(&sensor_mutex);
                 char buf[64];
-                snprintf(buf, sizeof(buf), "T:%.1fC H:%.1f%% Light:%u Dist:%ucm ok:%d\r\n",
-                         (double)local.temp, (double)local.humi,
+                int ti = (int)local.temp, td = (int)((local.temp - ti) * 10 + 0.5f);
+                int hi = (int)local.humi, hd = (int)((local.humi - hi) * 10 + 0.5f);
+                snprintf(buf, sizeof(buf), "T:%d.%dC H:%d.%d%% Light:%u Dist:%ucm ok:%d\r\n",
+                         ti, td, hi, hd,
                          local.light, local.distance, local.is_valid);
                 uart_puts(buf);
             }
@@ -323,13 +325,19 @@ static void shell_thread_entry(void *param)
                 rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
                 float t = sensor_data.temp;
                 rt_mutex_release(&sensor_mutex);
-                char buf[16]; snprintf(buf, sizeof(buf), "%.1f C\r\n", (double)t); uart_puts(buf);
+                char buf[16];
+                int ti = (int)t, td = (int)((t - ti) * 10 + 0.5f);
+                snprintf(buf, sizeof(buf), "%d.%d C\r\n", ti, td);
+                uart_puts(buf);
             }
             else if (!strcmp(cmd, "humi")) {
                 rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
                 float h = sensor_data.humi;
                 rt_mutex_release(&sensor_mutex);
-                char buf[16]; snprintf(buf, sizeof(buf), "%.1f %%\r\n", (double)h); uart_puts(buf);
+                char buf[16];
+                int hi = (int)h, hd = (int)((h - hi) * 10 + 0.5f);
+                snprintf(buf, sizeof(buf), "%d.%d %%\r\n", hi, hd);
+                uart_puts(buf);
             }
             else if (!strcmp(cmd, "light")) {
                 rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
