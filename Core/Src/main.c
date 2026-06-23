@@ -24,6 +24,7 @@
 #include "HCSR04.h"
 #include "usart.h"
 #include "esp8266_mqtt.h"
+#include "max7219.h"
 
 /* ---- LED Definitions ----------------------------------------------------- */
 
@@ -559,6 +560,7 @@ int main(void)
     MX_ADC1_Init();
     MX_USART2_UART_Init();
     MX_USART1_UART_Init();
+    max7219_init();
 
     /* SR04 Trig pin (PB6): output push-pull */
     {
@@ -600,6 +602,19 @@ int main(void)
     ssd1306_WriteString("Nano v3.1", Font_7x10, White);
     ssd1306_UpdateScreen(&hi2c1);
     rt_thread_mdelay(1500);
+
+    /* MAX7219 smiley face */
+    const uint8_t smiley[8] = {
+        0x00,   /* ........ */
+        0x24,   /* ..#..#.. */
+        0x24,   /* ..#..#.. */
+        0x00,   /* ........ */
+        0x00,   /* ........ */
+        0x42,   /* .#....#. */
+        0x3C,   /* ..####.. */
+        0x00,   /* ........ */
+    };
+    max7219_display(smiley);
 
     ssd1306_Fill(Black);
     ssd1306_SetCursor(22, 20);
