@@ -38,10 +38,12 @@ Core/Src/sysmem.c \
 Core/Src/syscalls.c \
 Core/Src/i2c.c \
 Core/Src/adc.c \
+Core/Src/tim.c \
 Libraries/SSD1306/ssd1306.c \
 Libraries/SSD1306/fonts.c \
 Libraries/DHT11/dht11.c \
 Libraries/DHT11/delay.c \
+Libraries/SR04/HCSR04.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_gpio_ex.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_rcc.c \
@@ -54,7 +56,9 @@ Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_flash.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_flash_ex.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_exti.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_i2c.c \
-Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_adc.c
+Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_adc.c \
+Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_tim.c \
+Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_tim_ex.c
 
 # C sources — RT-Thread Nano kernel
 RTT_C_SOURCES =  \
@@ -130,6 +134,7 @@ C_INCLUDES =  \
 -ICore/Inc \
 -ILibraries/SSD1306 \
 -ILibraries/DHT11 \
+-ILibraries/SR04 \
 -IDrivers/STM32F1xx_HAL_Driver/Inc/Legacy \
 -IDrivers/STM32F1xx_HAL_Driver/Inc \
 -IDrivers/CMSIS/Device/ST/STM32F1xx/Include \

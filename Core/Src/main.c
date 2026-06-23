@@ -19,6 +19,8 @@
 #include "ssd1306.h"
 #include "dht11.h"
 #include "adc.h"
+#include "tim.h"
+#include "HCSR04.h"
 
 /* ---- LED Definitions ----------------------------------------------------- */
 
@@ -48,6 +50,7 @@ struct SensorData {
     float    temp;
     float    humi;
     uint16_t light;
+    uint16_t distance;   /* cm, SR04 */
     uint8_t  is_valid;   /* 1=OK, 0=stale, 2=hw fault */
 };
 
@@ -208,9 +211,13 @@ static void sensor_thread_entry(void *param)
     while (1) {
         uint8_t result = DHT11_READ_DATA(&temp, &humi);
         uint16_t light = adc_read();
+        HCSR_04();
+        float dist = getSR04Distance();
+        uint16_t distance = (dist > 0 && dist < 4000) ? (uint16_t)(dist + 0.5f) : 0;
 
         rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
-        sensor_data.light = light;
+        sensor_data.light    = light;
+        sensor_data.distance = distance;
 
         if (result == 1) {
             last_temp  = temp;
@@ -236,7 +243,7 @@ static void sensor_thread_entry(void *param)
 
 static void oled_thread_entry(void *param)
 {
-    char line1[32], line2[32];
+    char line1[32], line2[32], line3[32];
     rt_thread_mdelay(2000);
 
     while (1) {
@@ -256,6 +263,7 @@ static void oled_thread_entry(void *param)
             snprintf(line1, sizeof(line1), "DHT11 fault!");
         }
         snprintf(line2, sizeof(line2), "Light: %u", local.light);
+        snprintf(line3, sizeof(line3), "Dist: %u cm", local.distance);
 
         rt_mutex_take(&i2c_mutex, RT_WAITING_FOREVER);
         ssd1306_Fill(Black);
@@ -263,6 +271,8 @@ static void oled_thread_entry(void *param)
         ssd1306_WriteString(line1, Font_7x10, White);
         ssd1306_SetCursor(0, 16);
         ssd1306_WriteString(line2, Font_7x10, White);
+        ssd1306_SetCursor(0, 32);
+        ssd1306_WriteString(line3, Font_7x10, White);
         ssd1306_UpdateScreen(&hi2c1);
         rt_mutex_release(&i2c_mutex);
     }
@@ -276,6 +286,21 @@ int main(void)
     MX_I2C1_Init();
     ssd1306_Init(&hi2c1);
     MX_ADC1_Init();
+
+    /* SR04 Trig pin (PB6): output push-pull */
+    {
+        GPIO_InitTypeDef s = {0};
+        s.Pin   = TRIG_Pin;
+        s.Mode  = GPIO_MODE_OUTPUT_PP;
+        s.Pull  = GPIO_NOPULL;
+        s.Speed = GPIO_SPEED_FREQ_HIGH;
+        HAL_GPIO_Init(TRIG_GPIO_Port, &s);
+        HAL_GPIO_WritePin(TRIG_GPIO_Port, TRIG_Pin, GPIO_PIN_RESET);
+    }
+
+    MX_TIM4_Init();
+    HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_2);
+    __HAL_TIM_ENABLE_IT(&htim4, TIM_IT_UPDATE);  /* overflow interrupt */
 
     /* kernel objects (static init — no heap frag) */
     rt_mutex_init(&sensor_mutex, "s_mtx", RT_IPC_FLAG_FIFO);
