@@ -281,33 +281,132 @@ static void oled_thread_entry(void *param)
     }
 }
 
-/* ---- Shell Thread (UART command parser) ---------------------------------- */
+/* ---- Shell Thread (UART command parser with history + autocomplete) ------ */
+
+#define HIST_SIZE  8
+#define HIST_LEN   32
+#define CMD_BUF    32
+
+static const char *shell_cmds[] = {
+    "help", "temp", "humi", "light", "dist", "stat",
+    "led on", "led off", NULL
+};
 
 static void shell_thread_entry(void *param)
 {
-    static char cmd[32];
-    static uint8_t pos;
+    static char cmd[CMD_BUF], history[HIST_SIZE][HIST_LEN];
+    static int  hist_wr, hist_cnt, hist_cur;
+    static uint8_t pos, esc_state;
 
     uart_puts("\r\nrtt> ");
 
     while (1) {
         int c = uart_getc();
-        if (c < 0) { rt_thread_mdelay(20); continue; }
+        if (c < 0) { rt_thread_mdelay(10); continue; }
 
-        /* echo + backspace handling */
-        if (c == '\b' || c == 127) {
-            if (pos > 0) { uart_puts("\b \b"); pos--; }
+        /* ---- ESC sequence parser (arrow keys) ---- */
+        if (esc_state == 0 && c == 0x1B)      { esc_state = 1; continue; }
+        if (esc_state == 1) {
+            esc_state = (c == '[') ? 2 : 0;
             continue;
         }
+        if (esc_state == 2) {
+            esc_state = 0;
+
+            if (c == 'A') {     /* UP: browse older history */
+                if (hist_cnt == 0) continue;
+                if (hist_cur < hist_cnt) {
+                    /* save current input if at bottom */
+                    if (hist_cur == 0) memcpy(history[hist_wr], cmd, pos + 1);
+
+                    hist_cur++;
+                    int idx = (hist_wr - hist_cur + HIST_SIZE) % HIST_SIZE;
+                    /* clear line, show recalled command */
+                    while (pos--) uart_puts("\b \b");
+                    uart_puts(history[idx]);
+                    strcpy(cmd, history[idx]);
+                    pos = strlen(cmd);
+                }
+                continue;
+            }
+            if (c == 'B') {     /* DOWN: browse newer history */
+                if (hist_cur == 0) continue;
+                hist_cur--;
+                /* clear line */
+                while (pos--) uart_puts("\b \b");
+                if (hist_cur == 0) {
+                    cmd[0] = '\0'; pos = 0; /* bottom: restore current input */
+                    memcpy(cmd, history[hist_wr], HIST_LEN);
+                    cmd[HIST_LEN-1] = '\0';
+                    pos = strlen(cmd);
+                    uart_puts(cmd);
+                } else {
+                    int idx = (hist_wr - hist_cur + HIST_SIZE) % HIST_SIZE;
+                    uart_puts(history[idx]);
+                    strcpy(cmd, history[idx]);
+                    pos = strlen(cmd);
+                }
+                continue;
+            }
+            /* other CSI keys: ignore */
+            continue;
+        }
+
+        /* ---- Backspace ---- */
+        if (c == '\b' || c == 127) {
+            if (pos > 0) { uart_puts("\b \b"); pos--; cmd[pos] = '\0'; }
+            continue;
+        }
+
+        /* ---- Tab: autocomplete ---- */
+        if (c == '\t') {
+            int match_idx = -1, match_cnt = 0;
+            for (int i = 0; shell_cmds[i]; i++) {
+                if (!strncmp(shell_cmds[i], cmd, pos)) {
+                    match_idx = i;
+                    match_cnt++;
+                }
+            }
+            if (match_cnt == 1) {
+                /* unique match: complete */
+                while (pos--) uart_puts("\b \b");
+                uart_puts(shell_cmds[match_idx]);
+                strcpy(cmd, shell_cmds[match_idx]);
+                pos = strlen(cmd);
+            } else if (match_cnt > 1) {
+                /* multiple: list them */
+                uart_puts("\r\n");
+                for (int i = 0; shell_cmds[i]; i++)
+                    if (!strncmp(shell_cmds[i], cmd, pos)) {
+                        uart_puts(shell_cmds[i]);
+                        uart_puts("  ");
+                    }
+                uart_puts("\r\nrtt> ");
+                uart_puts(cmd);
+            }
+            continue;
+        }
+
+        /* ---- Echo printable ---- */
         uart_putc((char)c);
 
+        /* ---- Enter: execute ---- */
         if (c == '\r' || c == '\n') {
             cmd[pos] = '\0';
             uart_puts("\r\n");
 
-            if (pos == 0) { uart_puts("rtt> "); pos = 0; continue; }
+            if (pos == 0) goto prompt;
 
-            /* parse command */
+            /* save to history (skip duplicates) */
+            if (hist_cnt == 0 || strcmp(cmd, history[(hist_wr - 1 + HIST_SIZE) % HIST_SIZE])) {
+                strncpy(history[hist_wr], cmd, HIST_LEN - 1);
+                history[hist_wr][HIST_LEN - 1] = '\0';
+                hist_wr = (hist_wr + 1) % HIST_SIZE;
+                if (hist_cnt < HIST_SIZE) hist_cnt++;
+            }
+            hist_cur = 0;
+
+            /* ---- command dispatch ---- */
             if      (!strcmp(cmd, "help")) uart_puts("help temp humi light dist stat led on|off\r\n");
             else if (!strcmp(cmd, "stat")) {
                 rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
@@ -317,8 +416,7 @@ static void shell_thread_entry(void *param)
                 int ti = (int)local.temp, td = (int)((local.temp - ti) * 10 + 0.5f);
                 int hi = (int)local.humi, hd = (int)((local.humi - hi) * 10 + 0.5f);
                 snprintf(buf, sizeof(buf), "T:%d.%dC H:%d.%d%% Light:%u Dist:%ucm ok:%d\r\n",
-                         ti, td, hi, hd,
-                         local.light, local.distance, local.is_valid);
+                         ti, td, hi, hd, local.light, local.distance, local.is_valid);
                 uart_puts(buf);
             }
             else if (!strcmp(cmd, "temp")) {
@@ -327,8 +425,7 @@ static void shell_thread_entry(void *param)
                 rt_mutex_release(&sensor_mutex);
                 char buf[16];
                 int ti = (int)t, td = (int)((t - ti) * 10 + 0.5f);
-                snprintf(buf, sizeof(buf), "%d.%d C\r\n", ti, td);
-                uart_puts(buf);
+                snprintf(buf, sizeof(buf), "%d.%d C\r\n", ti, td); uart_puts(buf);
             }
             else if (!strcmp(cmd, "humi")) {
                 rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
@@ -336,8 +433,7 @@ static void shell_thread_entry(void *param)
                 rt_mutex_release(&sensor_mutex);
                 char buf[16];
                 int hi = (int)h, hd = (int)((h - hi) * 10 + 0.5f);
-                snprintf(buf, sizeof(buf), "%d.%d %%\r\n", hi, hd);
-                uart_puts(buf);
+                snprintf(buf, sizeof(buf), "%d.%d %%\r\n", hi, hd); uart_puts(buf);
             }
             else if (!strcmp(cmd, "light")) {
                 rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
@@ -355,10 +451,12 @@ static void shell_thread_entry(void *param)
             else if (!strcmp(cmd, "led off")) { auto_mode = 0; cur_led = 0; all_leds_off(); uart_puts("ok\r\n"); }
             else { uart_puts("? try: help\r\n"); }
 
+prompt:
             pos = 0;
             uart_puts("rtt> ");
-        } else if (pos < sizeof(cmd) - 1) {
+        } else if (pos < CMD_BUF - 1) {
             cmd[pos++] = (char)c;
+            cmd[pos] = '\0';
         }
     }
 }
@@ -396,8 +494,26 @@ int main(void)
 
     /* splash screen */
     ssd1306_Fill(Black);
-    ssd1306_SetCursor(0, 0);
-    ssd1306_WriteString("Init...", Font_7x10, White);
+    /* border */
+    for (uint8_t x = 0; x < 128; x++) {
+        ssd1306_DrawPixel(x,  0, White);
+        ssd1306_DrawPixel(x, 63, White);
+    }
+    for (uint8_t y = 0; y < 64; y++) {
+        ssd1306_DrawPixel(0,   y, White);
+        ssd1306_DrawPixel(127, y, White);
+    }
+    /* title */
+    ssd1306_SetCursor(20, 12);
+    ssd1306_WriteString("RT-Thread", Font_11x18, White);
+    ssd1306_SetCursor(30, 36);
+    ssd1306_WriteString("Nano v3.1", Font_7x10, White);
+    ssd1306_UpdateScreen(&hi2c1);
+    rt_thread_mdelay(1500);
+
+    ssd1306_Fill(Black);
+    ssd1306_SetCursor(22, 20);
+    ssd1306_WriteString("Init...", Font_11x18, White);
     ssd1306_UpdateScreen(&hi2c1);
 
     rt_thread_t tid;
