@@ -79,12 +79,11 @@ bool ESP8266_WaitResponse(const char* token, uint32_t timeout)
 {
 	uint32_t start = HAL_GetTick( );
 	while (WAIT_TIMEOUT_MS(timeout, start)) {
-		if (( HAL_GetTick( ) - last_rx_tick ) > 50 && uart_idx) {
-			if (strstr((char*) uart_buf, token)) {
-				uart_idx = 0; memset(uart_buf, 0, ESP_BUFF_SIZE);
-				return true;
-			}
+		if (uart_idx && strstr((char*) uart_buf, token)) {
+			uart_idx = 0; memset(uart_buf, 0, ESP_BUFF_SIZE);
+			return true;
 		}
+		HAL_Delay(2);
 	}
 	return false;
 }
@@ -98,3 +97,25 @@ ESP_Status ESP8266_MqttPub(const char* topic, const uint8_t* data, uint16_t len)
 	Esp8266_SendAtNotWaitResponse((uint8_t*) cmd, strlen(cmd));
 	return ESP8266_WaitResponse("OK", 5000) ? 0 : -1;
 }
+
+ESP_Status ESP8266_MqttSub(uint8_t idx, const char* topic, uint8_t qos)
+{
+	uart_idx = 0; memset(uart_buf, 0, ESP_BUFF_SIZE);
+	char cmd[128];
+	snprintf(cmd, sizeof(cmd), "AT+MQTTSUB=%d,\"%s\",%d\r\n", idx, topic, qos);
+	Esp8266_SendAtNotWaitResponse((uint8_t*) cmd, strlen(cmd));
+	return ESP8266_WaitResponse("OK", 5000) ? 0 : -1;
+}
+
+ESP_Status ESP8266_MqttUnsub(uint8_t idx, const char* topic)
+{
+	uart_idx = 0; memset(uart_buf, 0, ESP_BUFF_SIZE);
+	char cmd[128];
+	snprintf(cmd, sizeof(cmd), "AT+MQTTUNSUB=%d,\"%s\"\r\n", idx, topic);
+	Esp8266_SendAtNotWaitResponse((uint8_t*) cmd, strlen(cmd));
+	return ESP8266_WaitResponse("OK", 5000) ? 0 : -1;
+}
+
+const char* esp_get_buf(void)    { return (const char*)uart_buf; }
+int  esp_get_buf_len(void)       { return uart_idx; }
+void esp_clear_buf(void)         { uart_idx = 0; memset(uart_buf, 0, ESP_BUFF_SIZE); }

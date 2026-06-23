@@ -180,7 +180,7 @@ void DebugMon_Handler(void)
 
 void USART1_IRQHandler(void)
 {
-    ESP8266_UART_IRQHandler();
+    HAL_UART_IRQHandler(&huart1);
 }
 
 void USART2_IRQHandler(void)

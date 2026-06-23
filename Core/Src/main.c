@@ -80,7 +80,11 @@ static int         g_serial_snake; /* serial input mode */
 
 static char mqtt_ssid[32], mqtt_pwd[32];
 static char mqtt_broker[32], mqtt_port[8], mqtt_client[32];
+static char mqtt_topic[48];
 static int  mqtt_connected;
+static volatile int esp_cmd, esp_result;
+static struct rt_semaphore esp_go_sem;
+static struct rt_semaphore esp_done_sem;
 
 /* ---- Forward Declarations ------------------------------------------------ */
 
@@ -89,7 +93,7 @@ static void key_thread_entry(void *param);
 static void sensor_thread_entry(void *param);
 static void oled_thread_entry(void *param);
 static void shell_thread_entry(void *param);
-static void mqtt_thread_entry(void *param);
+static void esp_thread_entry(void *param);
 static void game_thread_entry(void *param);
 
 /* ---- Helpers ------------------------------------------------------------- */
@@ -453,7 +457,7 @@ static void shell_thread_entry(void *param)
             hist_cur = 0;
 
             /* ---- command dispatch ---- */
-            if      (!strcmp(cmd, "help")) uart_puts("help temp humi light dist stat led on|off snake\r\nwifi ssid pwd   mqtt ip port id   pub\r\n");
+            if      (!strcmp(cmd, "help")) uart_puts("help temp humi light dist stat led on|off snake\r\nwifi SSID PWD   mqtt IP PORT ID   connect   mqttconn\r\npub   sub TOPIC   unsub TOPIC\r\n");
             else if (!strcmp(cmd, "stat")) {
                 rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
                 struct SensorData local = sensor_data;
@@ -461,8 +465,8 @@ static void shell_thread_entry(void *param)
                 char buf[64];
                 int ti = (int)local.temp, td = (int)((local.temp - ti) * 10 + 0.5f);
                 int hi = (int)local.humi, hd = (int)((local.humi - hi) * 10 + 0.5f);
-                snprintf(buf, sizeof(buf), "T:%d.%dC H:%d.%d%% Light:%u Dist:%ucm ok:%d\r\n",
-                         ti, td, hi, hd, local.light, local.distance, local.is_valid);
+                snprintf(buf, sizeof(buf), "T:%d.%dC H:%d.%d%% Light:%u Dist:%ucm ok:%d esp:%d\r\n",
+                         ti, td, hi, hd, local.light, local.distance, local.is_valid, mqtt_connected);
                 uart_puts(buf);
             }
             else if (!strcmp(cmd, "temp")) {
@@ -498,47 +502,70 @@ static void shell_thread_entry(void *param)
             else if (!strcmp(cmd, "snake"))  { snake_init(); game_mode = 1; g_serial_snake = 1; uart_puts("WASD=move Enter=end Ctrl+C=abort\r\n"); }
             else if (!strncmp(cmd, "wifi ", 5)) {
                 char *sp = strchr(cmd + 5, ' ');
-                if (!sp) { uart_puts("usage: wifi ssid password\r\n"); goto prompt; }
+                if (!sp) { uart_puts("usage: wifi SSID PWD\r\n"); goto prompt; }
                 *sp = '\0';
                 strncpy(mqtt_ssid, cmd + 5, sizeof(mqtt_ssid) - 1);
                 strncpy(mqtt_pwd, sp + 1, sizeof(mqtt_pwd) - 1);
+                uart_puts("saved\r\n");
+            }
+            else if (!strcmp(cmd, "connect")) {
                 uart_puts("Connecting WiFi...\r\n");
-                if (ESP8266_Init() < 0) { uart_puts("ESP8266 init fail\r\n"); goto prompt; }
-                uint8_t r = ESP8266_JoinAccessPoint(mqtt_ssid, mqtt_pwd);
-                if (r == 0) uart_puts("WiFi connected!\r\n");
-                else { char b[32]; snprintf(b, sizeof(b), "WiFi fail %d\r\n", r); uart_puts(b); }
+                esp_cmd = 1;
+                rt_sem_release(&esp_go_sem);
+                if (rt_sem_take(&esp_done_sem, 25000) == RT_EOK) {
+                    if (esp_result == 0) uart_puts("WiFi connected!\r\n");
+                    else { char b[48]; snprintf(b, sizeof(b), "WiFi fail %d\r\n", (int)esp_result); uart_puts(b); }
+                } else uart_puts("WiFi timeout\r\n");
             }
             else if (!strncmp(cmd, "mqtt ", 5)) {
                 char *p1 = strchr(cmd + 5, ' ');
                 char *p2 = p1 ? strchr(p1 + 1, ' ') : NULL;
-                if (!p1 || !p2) { uart_puts("usage: mqtt ip port clientid\r\n"); goto prompt; }
+                if (!p1 || !p2) { uart_puts("usage: mqtt IP PORT ID\r\n"); goto prompt; }
                 *p1 = '\0'; *p2 = '\0';
                 strncpy(mqtt_broker, cmd + 5, sizeof(mqtt_broker) - 1);
                 strncpy(mqtt_port,   p1 + 1, sizeof(mqtt_port) - 1);
                 strncpy(mqtt_client, p2 + 1, sizeof(mqtt_client) - 1);
+                uart_puts("saved\r\n");
+            }
+            else if (!strcmp(cmd, "mqttconn")) {
                 uart_puts("Connecting MQTT...\r\n");
-                if (ESP8266_ConnectToServer(mqtt_broker, mqtt_port) < 0)
-                    { uart_puts("TCP fail\r\n"); goto prompt; }
-                if (ESP8266_MqttUserCfg(mqtt_client, "", "") < 0)
-                    { uart_puts("UserCfg fail\r\n"); goto prompt; }
-                if (ESP8266_MqttConnect(0, mqtt_broker, mqtt_port, 0) < 0)
-                    { uart_puts("MQTT connect fail\r\n"); goto prompt; }
-                mqtt_connected = 1;
-                uart_puts("MQTT connected!\r\n");
+                esp_cmd = 2;
+                rt_sem_release(&esp_go_sem);
+                if (rt_sem_take(&esp_done_sem, 15000) == RT_EOK) {
+                    if (esp_result == 0) uart_puts("MQTT connected!\r\n");
+                    else { char b[48]; snprintf(b, sizeof(b), "MQTT fail %d\r\n", (int)esp_result); uart_puts(b); }
+                } else uart_puts("MQTT timeout\r\n");
             }
             else if (!strcmp(cmd, "pub")) {
-                if (!mqtt_connected) { uart_puts("not connected\r\n"); goto prompt; }
-                rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
-                struct SensorData local = sensor_data;
-                rt_mutex_release(&sensor_mutex);
-                char payload[128];
-                snprintf(payload, sizeof(payload),
-                    "{\"t\":%d.%d,\"h\":%d.%d,\"l\":%u,\"d\":%u}",
-                    (int)local.temp, (int)((local.temp-(int)local.temp)*10+0.5f),
-                    (int)local.humi, (int)((local.humi-(int)local.humi)*10+0.5f),
-                    local.light, local.distance);
-                ESP8266_MqttPub("sensor/data", (uint8_t*)payload, strlen(payload));
-                uart_puts("pub ok\r\n");
+                esp_cmd = 3;
+                rt_sem_release(&esp_go_sem);
+                rt_sem_take(&esp_done_sem, 10000);
+                uart_puts(esp_result == 0 ? "pub ok\r\n" : "pub fail\r\n");
+            }
+            else if (!strncmp(cmd, "test ", 5)) {
+                esp_cmd = 7;
+                strncpy(mqtt_topic, cmd + 5, sizeof(mqtt_topic) - 1);
+                rt_sem_release(&esp_go_sem);
+                rt_sem_take(&esp_done_sem, 10000);
+                uart_puts(esp_result == 0 ? "test ok\r\n" : "test fail\r\n");
+            }
+            else if (!strncmp(cmd, "sub ", 4)) {
+                strncpy(mqtt_topic, cmd + 4, sizeof(mqtt_topic) - 1);
+                esp_cmd = 4;
+                rt_sem_release(&esp_go_sem);
+                if (rt_sem_take(&esp_done_sem, 10000) == RT_EOK) {
+                    if (esp_result == 0) uart_puts("sub ok\r\n");
+                    else { char b[32]; snprintf(b, sizeof(b), "sub fail %d\r\n", (int)esp_result); uart_puts(b); }
+                } else uart_puts("sub timeout\r\n");
+            }
+            else if (!strncmp(cmd, "unsub ", 6)) {
+                strncpy(mqtt_topic, cmd + 6, sizeof(mqtt_topic) - 1);
+                esp_cmd = 5;
+                rt_sem_release(&esp_go_sem);
+                if (rt_sem_take(&esp_done_sem, 10000) == RT_EOK) {
+                    if (esp_result == 0) uart_puts("unsub ok\r\n");
+                    else { char b[32]; snprintf(b, sizeof(b), "unsub fail %d\r\n", (int)esp_result); uart_puts(b); }
+                } else uart_puts("unsub timeout\r\n");
             }
             else { uart_puts("? try: help\r\n"); }
 
@@ -552,33 +579,82 @@ prompt:
     }
 }
 
-/* ---- MQTT Thread (periodic sensor publish) ------------------------------- */
+/* ---- ESP Thread (async WiFi/MQTT worker) --------------------------------- */
 
-static void mqtt_thread_entry(void *param)
+static void esp_thread_entry(void *param)
 {
-    rt_thread_mdelay(5000);
-
     while (1) {
-        if (!mqtt_connected) {
-            rt_thread_mdelay(1000);
-            continue;
+        rt_err_t ret = rt_sem_take(&esp_go_sem, mqtt_connected == 2 ? 800 : RT_WAITING_FOREVER);
+        if (ret != RT_EOK && mqtt_connected == 2) esp_cmd = 6;
+
+        int cmd = esp_cmd;
+
+        if (cmd == 1) {
+            esp_result = ESP8266_Init();
+            if (esp_result >= 0) {
+                rt_thread_mdelay(2000);
+                esp_result = ESP8266_JoinAccessPoint(mqtt_ssid, mqtt_pwd);
+            }
+            mqtt_connected = (esp_result == 0) ? 1 : -1;
+        }
+        else if (cmd == 2) {
+            esp_result = ESP8266_ConnectToServer(mqtt_broker, mqtt_port);
+            if (esp_result >= 0)
+                esp_result = ESP8266_MqttUserCfg(mqtt_client, "", "");
+            if (esp_result >= 0)
+                esp_result = ESP8266_MqttConnect(0, mqtt_broker, mqtt_port, 0);
+            mqtt_connected = (esp_result == 0) ? 2 : -2;
+        }
+        else if (cmd == 3) {
+            rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
+            struct SensorData local = sensor_data;
+            rt_mutex_release(&sensor_mutex);
+            char payload[128];
+            snprintf(payload, sizeof(payload),
+                "t=%d.%d h=%d.%d l=%u d=%u",
+                (int)local.temp, (int)((local.temp-(int)local.temp)*10+0.5f),
+                (int)local.humi, (int)((local.humi-(int)local.humi)*10+0.5f),
+                local.light, local.distance);
+            {
+                char dbg[160];
+                snprintf(dbg, sizeof(dbg), "\r\n[pub] %s\r\n", payload);
+                uart_puts(dbg);
+            }
+            esp_result = ESP8266_MqttPub("sensor/data", (uint8_t*)payload, strlen(payload));
+        }
+        else if (cmd == 4) {
+            esp_result = ESP8266_MqttSub(0, mqtt_topic, 0);
+        }
+        else if (cmd == 5) {
+            esp_result = ESP8266_MqttUnsub(0, mqtt_topic);
+        }
+        else if (cmd == 7) {
+            esp_result = ESP8266_MqttPub(mqtt_topic, (uint8_t*)"hello", 5);
+        }
+        else if (cmd == 6) {
+            /* background: scan for +MQTTSUBRECV and auto-print */
+            const char *b = esp_get_buf();
+            int len = esp_get_buf_len();
+            if (len > 0) {
+                char *p = strstr((char*)b, "+MQTTSUBRECV");
+                if (p) {
+                    char *eol = strpbrk(p, "\r\n");
+                    if (eol) {
+                        *eol = '\0';
+                        char *last = strrchr(p, ',');
+                        if (last) {
+                            uart_puts("\r\n[MQTT] ");
+                            uart_puts(last + 1);
+                            uart_puts("\r\nrtt> ");
+                        }
+                    }
+                    esp_clear_buf();
+                }
+            }
+            continue;  /* don't release done_sem for background check */
         }
 
-        rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
-        struct SensorData local = sensor_data;
-        rt_mutex_release(&sensor_mutex);
-
-        char payload[128];
-        snprintf(payload, sizeof(payload),
-            "{\"t\":%d.%d,\"h\":%d.%d,\"l\":%u,\"d\":%u}",
-            (int)local.temp, (int)((local.temp-(int)local.temp)*10+0.5f),
-            (int)local.humi, (int)((local.humi-(int)local.humi)*10+0.5f),
-            local.light, local.distance);
-
-        if (ESP8266_MqttPub("sensor/data", (uint8_t*)payload, strlen(payload)) < 0) {
-            mqtt_connected = 0;
-        }
-        rt_thread_mdelay(10000);
+        rt_sem_release(&esp_done_sem);
     }
 }
 
@@ -670,6 +746,8 @@ int main(void)
     rt_mutex_init(&i2c_mutex,    "i_mtx", RT_IPC_FLAG_FIFO);
     rt_sem_init(&sensor_sem, "s_sem", 0, RT_IPC_FLAG_FIFO);
     rt_sem_init(&key_sem,    "k_sem", 0, RT_IPC_FLAG_FIFO);
+    rt_sem_init(&esp_go_sem, "e_go",  0, RT_IPC_FLAG_FIFO);
+    rt_sem_init(&esp_done_sem,"e_done",0, RT_IPC_FLAG_FIFO);
 
     /* splash screen */
     ssd1306_Fill(Black);
@@ -703,9 +781,9 @@ int main(void)
     if (tid) rt_thread_startup(tid);
     tid = rt_thread_create("keys", key_thread_entry,    RT_NULL, 384,  10, 10);
     if (tid) rt_thread_startup(tid);
-    tid = rt_thread_create("shell", shell_thread_entry,  RT_NULL, 768,  15, 10);
+    tid = rt_thread_create("shell", shell_thread_entry,  RT_NULL, 768,  13, 10);
     if (tid) rt_thread_startup(tid);
-    tid = rt_thread_create("mqtt",  mqtt_thread_entry,   RT_NULL, 1024, 14, 10);
+    tid = rt_thread_create("esp",   esp_thread_entry,    RT_NULL, 1024, 14, 10);
     if (tid) rt_thread_startup(tid);
     tid = rt_thread_create("game",  game_thread_entry,   RT_NULL, 640,   9, 10);
     if (tid) rt_thread_startup(tid);

@@ -21,9 +21,14 @@ uint8_t ESP8266_JoinAccessPoint(const char* ssid, const char* pwd);
 ESP_Status ESP8266_ConnectToServer(const char* ip, const char* port);
 void Esp8266_SendAtNotWaitResponse(uint8_t* str, uint16_t len);
 ESP_Status ESP8266_MqttPub(const char* topic, const uint8_t* data, uint16_t len);
+ESP_Status ESP8266_MqttSub(uint8_t idx, const char* topic, uint8_t qos);
+ESP_Status ESP8266_MqttUnsub(uint8_t idx, const char* topic);
 ESP_Status ESP8266_MqttUserCfg(const char* clientId, const char* username,const char* password);
 ESP_Status ESP8266_MqttConnect(uint8_t idx,
 	const char* host, const char* port,
 	bool secure);
+const char* esp_get_buf(void);
+int  esp_get_buf_len(void);
+void esp_clear_buf(void);
 
 #endif // __ESP8266_MQTT_H

@@ -1,4 +1,5 @@
 #include "usart.h"
+#include "esp8266_mqtt.h"
 
 UART_HandleTypeDef huart2;
 
@@ -86,15 +87,20 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef *huart)
 /* ISR: called by USART2_IRQHandler in stm32f1xx_it.c */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-    if (huart->Instance != USART2) return;
-
-    uint16_t next = (uart_rx_head + 1) % UART_RX_BUF_SIZE;
-    if (next != uart_rx_tail) {
-        uart_rx_buf[uart_rx_head] = rx_byte;
-        uart_rx_head = next;
+    if (huart->Instance == USART2)
+    {
+        uint16_t next = (uart_rx_head + 1) % UART_RX_BUF_SIZE;
+        if (next != uart_rx_tail) {
+            uart_rx_buf[uart_rx_head] = rx_byte;
+            uart_rx_head = next;
+        }
+        HAL_UART_Receive_IT(&huart2, &rx_byte, 1);
     }
-    /* re-arm RX interrupt */
-    HAL_UART_Receive_IT(&huart2, &rx_byte, 1);
+
+    if (huart->Instance == USART1)
+    {
+        ESP8266_UART_IRQHandler();
+    }
 }
 
 /* Non-blocking: return next byte or -1 if buffer empty */
