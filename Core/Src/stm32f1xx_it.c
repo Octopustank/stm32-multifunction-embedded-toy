@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "usart.h"
+#include "esp8266_mqtt.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -176,6 +177,11 @@ void DebugMon_Handler(void)
 /******************************************************************************/
 
 /* USER CODE BEGIN 1 */
+
+void USART1_IRQHandler(void)
+{
+    ESP8266_UART_IRQHandler();
+}
 
 void USART2_IRQHandler(void)
 {

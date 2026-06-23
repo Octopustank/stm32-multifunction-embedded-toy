@@ -45,6 +45,7 @@ Libraries/SSD1306/fonts.c \
 Libraries/DHT11/dht11.c \
 Libraries/DHT11/delay.c \
 Libraries/SR04/HCSR04.c \
+Libraries/ESP8266_MQTT/esp8266_mqtt.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_gpio_ex.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal.c \
 Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_rcc.c \
@@ -137,6 +138,7 @@ C_INCLUDES =  \
 -ILibraries/SSD1306 \
 -ILibraries/DHT11 \
 -ILibraries/SR04 \
+-ILibraries/ESP8266_MQTT \
 -IDrivers/STM32F1xx_HAL_Driver/Inc/Legacy \
 -IDrivers/STM32F1xx_HAL_Driver/Inc \
 -IDrivers/CMSIS/Device/ST/STM32F1xx/Include \

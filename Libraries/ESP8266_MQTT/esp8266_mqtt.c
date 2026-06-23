@@ -88,3 +88,13 @@ bool ESP8266_WaitResponse(const char* token, uint32_t timeout)
 	}
 	return false;
 }
+
+ESP_Status ESP8266_MqttPub(const char* topic, const uint8_t* data, uint16_t len)
+{
+	uart_idx = 0; memset(uart_buf, 0, ESP_BUFF_SIZE);
+	char cmd[256];
+	snprintf(cmd, sizeof(cmd),
+		"AT+MQTTPUB=0,\"%s\",\"%s\",1,0\r\n", topic, (const char*)data);
+	Esp8266_SendAtNotWaitResponse((uint8_t*) cmd, strlen(cmd));
+	return ESP8266_WaitResponse("OK", 5000) ? 0 : -1;
+}
