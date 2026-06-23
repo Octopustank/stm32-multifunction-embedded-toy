@@ -1,28 +1,7 @@
-/**
- * @file HCSR04.c
- * @author Zhong Zepeng (1935595312@qq.com)
- * @brief
- * @version 0.1
- * @date 2022-11-25
- *
- * @copyright Copyright (c) 2022
- *
- */
 #include "HCSR04.h"
-#include "stdio.h"
-#include "gpio.h"
 #include "tim.h"
-//#include "usart.h"
-//#include "User_Debug.h"
-#include <string.h>  // Ìí¼ÓÕâÒ»ÐÐ
-/**
- * @brief ¼¤»î³¬Éù²¨¶¨Ê±Æ÷
- *
- */
 
-// È«¾Ö±äÁ¿¶¨Òå£¬·ÅÔÚÎÄ¼þ¶¥²¿£¨Ö÷º¯ÊýÖ®Íâ£©
-
-void HCSR_04()
+void HCSR_04(void)
 {
     uint32_t i;
     HAL_GPIO_WritePin(TRIG_GPIO_Port, TRIG_Pin, GPIO_PIN_SET);
@@ -31,26 +10,26 @@ void HCSR_04()
     HAL_GPIO_WritePin(TRIG_GPIO_Port, TRIG_Pin, GPIO_PIN_RESET);
 }
 
-/**
- * @brief ¼ÆËã³¬Éù²¨¼ì²âµÄ¾àÀë
- *
- * @return float
+/*
+ * Wait for Echo capture to complete, then calculate distance.
+ * SR04 round-trip at max 4m â‰ˆ 23ms; timeout 50ms is safe.
+ * Uses HAL_Delay(1) to yield CPU via SysTick â†’ RT-Thread scheduler.
  */
-
-float getSR04Distance()
+float getSR04Distance(void)
 {
-    float len = 0;
-    uint32_t time = 0;
-    if (TIM4CH2_CAPTURE_STA & 0X80) // ÊäÈë²¶»ñ´¥·¢
-    {
-        time = TIM4CH2_CAPTURE_STA & 0X3f; // »ñµÃÒç³ö´ÎÊý
-        time *= 65536;                     // Ò»´ÎÒç³öÎª65536 µÃµ½Òç³öµÄÊ±¼ä
-        time += TIM4CH2_CAPTURE_VAL;       // Òç³öµÄÊ±¼ä+ÏÖÔÚ¶¨Ê±Æ÷µÄÖµ µÃµ½×ÜµÄÊ±¼ä
-
-        len = time * 342.62 * 100 / 2000000; // ¼ÆËãµÃµ½¾àÀë cm
-        // Êä³ö¾àÀëºÍµ¥Î»
-        TIM4CH2_CAPTURE_STA = 0; // Çå³ýÒç³ö
+    int retry = 50;
+    while (!(TIM4CH2_CAPTURE_STA & 0x80) && retry > 0) {
+        HAL_Delay(1);
+        retry--;
     }
+
+    if (!(TIM4CH2_CAPTURE_STA & 0x80))
+        return 0.0f;
+
+    uint32_t time = (TIM4CH2_CAPTURE_STA & 0x3f) * 65536UL;
+    time += TIM4CH2_CAPTURE_VAL;
+
+    float len = time * 342.62f * 100.0f / 2000000.0f;
+    TIM4CH2_CAPTURE_STA = 0;
     return len;
 }
-
