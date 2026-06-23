@@ -603,7 +603,12 @@ int main(void)
     ssd1306_UpdateScreen(&hi2c1);
     rt_thread_mdelay(1500);
 
-    /* MAX7219 smiley face */
+    /* MAX7219: quick self-test — all LEDs on for 500ms */
+    const uint8_t all_on[8] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+    max7219_display(all_on);
+    rt_thread_mdelay(500);
+
+    /* smiley face */
     const uint8_t smiley[8] = {
         0x00,   /* ........ */
         0x24,   /* ..#..#.. */
