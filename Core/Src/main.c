@@ -356,6 +356,15 @@ static void shell_thread_entry(void *param)
         int c = uart_getc();
         if (c < 0) { rt_thread_mdelay(10); continue; }
 
+        /* WASD → snake direction when game active */
+        if (game_mode == 1) {
+            if (c == 'w' || c == 'W') g_dir = DIR_UP;
+            if (c == 's' || c == 'S') g_dir = DIR_DOWN;
+            if (c == 'a' || c == 'A') g_dir = DIR_LEFT;
+            if (c == 'd' || c == 'D') g_dir = DIR_RIGHT;
+            continue;
+        }
+
         /* ---- ESC sequence parser (arrow keys) ---- */
         if (esc_state == 0 && c == 0x1B)      { esc_state = 1; continue; }
         if (esc_state == 1) {
@@ -707,11 +716,13 @@ static void game_thread_entry(void *param)
         if (game_mode == 2) {
             const uint8_t all[8]  = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
             const uint8_t none[8] = {0,0,0,0,0,0,0,0};
-            for (int i = 0; i < 3; i++) {
+            for (int i = 0; i < 3 && game_mode == 2; i++) {
                 max7219_display(all);  rt_thread_mdelay(150);
+                if (game_mode != 2) break;
                 max7219_display(none); rt_thread_mdelay(150);
             }
-            rt_thread_mdelay(500);
+            if (game_mode == 2) rt_thread_mdelay(500);
+            continue;
         }
     }
 }
