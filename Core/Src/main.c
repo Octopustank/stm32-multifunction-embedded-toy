@@ -297,8 +297,15 @@ static void shell_thread_entry(void *param)
     static char cmd[CMD_BUF], history[HIST_SIZE][HIST_LEN];
     static int  hist_wr, hist_cnt, hist_cur;
     static uint8_t pos, esc_state;
+    char buf[64];
 
-    uart_puts("\r\nrtt> ");
+    uart_puts("\r\n \\ | /\r\n");
+    uart_puts("- RT -     Thread Operating System\r\n");
+    snprintf(buf, sizeof(buf), " / | \\     %d.%d.%d build %s %s\r\n",
+             RT_VERSION, RT_SUBVERSION, RT_REVISION, __DATE__, __TIME__);
+    uart_puts(buf);
+    uart_puts(" 2006 - 2022 Copyright by RT-Thread team\r\n\r\n");
+    uart_puts("rtt> ");
 
     while (1) {
         int c = uart_getc();
