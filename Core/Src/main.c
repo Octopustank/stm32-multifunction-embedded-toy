@@ -216,8 +216,8 @@ static void key_thread_entry(void *param)
         }
 
         /* ---- normal-mode keys ---- */
-        if (key_pressed(K3_UP_GPIO_Port, K3_UP_Pin))
-            { game_mode = 1; snake_init(); continue; }
+            if (key_pressed(K3_UP_GPIO_Port, K3_UP_Pin))
+                { game_mode = 1; snake_init(); g_serial_snake = 1; continue; }
         if (key_pressed(K5_CENTER_GPIO_Port, K5_CENTER_Pin)) {
             if (auto_mode) {
                 rt_sem_release(&key_sem);
@@ -355,15 +355,6 @@ static void shell_thread_entry(void *param)
     while (1) {
         int c = uart_getc();
         if (c < 0) { rt_thread_mdelay(10); continue; }
-
-        /* WASD → snake direction when game active */
-        if (game_mode == 1) {
-            if (c == 'w' || c == 'W') g_dir = DIR_UP;
-            if (c == 's' || c == 'S') g_dir = DIR_DOWN;
-            if (c == 'a' || c == 'A') g_dir = DIR_LEFT;
-            if (c == 'd' || c == 'D') g_dir = DIR_RIGHT;
-            continue;
-        }
 
         /* ---- ESC sequence parser (arrow keys) ---- */
         if (esc_state == 0 && c == 0x1B)      { esc_state = 1; continue; }
@@ -676,7 +667,7 @@ static void game_thread_entry(void *param)
     const uint8_t smiley[8] = {
         0x00, 0x24, 0x24, 0x00, 0x00, 0x42, 0x3C, 0x00
     };
-    static int prev_mode;
+    static int prev_mode = 1;  /* force initial smiley display on boot */
 
     while (1) {
         if (!game_mode) {
