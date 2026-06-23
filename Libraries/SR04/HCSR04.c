@@ -4,17 +4,20 @@
 void HCSR_04(void)
 {
     uint32_t i;
+
+    /* reset capture state before triggering */
+    TIM4CH2_CAPTURE_STA = 0;
+    TIM4CH2_CAPTURE_VAL = 0;
+    __HAL_TIM_SET_COUNTER(&htim4, 0);
+    __HAL_TIM_SET_CAPTUREPOLARITY(&htim4, TIM_CHANNEL_2,
+                                  TIM_INPUTCHANNELPOLARITY_RISING);
+
     HAL_GPIO_WritePin(TRIG_GPIO_Port, TRIG_Pin, GPIO_PIN_SET);
     for (i = 0; i < 72 * 20; i++)
         __NOP();
     HAL_GPIO_WritePin(TRIG_GPIO_Port, TRIG_Pin, GPIO_PIN_RESET);
 }
 
-/*
- * Wait for Echo capture to complete, then calculate distance.
- * SR04 round-trip at max 4m ≈ 23ms; timeout 50ms is safe.
- * Uses HAL_Delay(1) to yield CPU via SysTick → RT-Thread scheduler.
- */
 float getSR04Distance(void)
 {
     int retry = 50;
