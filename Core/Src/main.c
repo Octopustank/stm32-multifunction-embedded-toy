@@ -775,7 +775,11 @@ int main(void)
     ssd1306_SetCursor(20, 12);
     ssd1306_WriteString("RT-Thread", Font_11x18, White);
     ssd1306_SetCursor(30, 36);
-    ssd1306_WriteString("Nano v3.1", Font_7x10, White);
+    {
+        char ver[16];
+        snprintf(ver, sizeof(ver), "v%d.%d.%d", RT_VERSION, RT_SUBVERSION, RT_REVISION);
+        ssd1306_WriteString(ver, Font_7x10, White);
+    }
     ssd1306_UpdateScreen(&hi2c1);
     rt_thread_mdelay(1500);
     ssd1306_Fill(Black);
