@@ -302,6 +302,8 @@ static void oled_thread_entry(void *param)
         if (local.is_valid == 1) {
             int t_i = (int)local.temp, t_d = (int)((local.temp - t_i) * 10 + 0.5f);
             int h_i = (int)local.humi, h_d = (int)((local.humi - h_i) * 10 + 0.5f);
+            if (t_d >= 10) { t_i++; t_d -= 10; }
+            if (h_d >= 10) { h_i++; h_d -= 10; }
             snprintf(line1, sizeof(line1), "T:%d.%dC H:%d.%d%%", t_i, t_d, h_i, h_d);
         } else if (local.is_valid == 0) {
             snprintf(line1, sizeof(line1), "reading...");
@@ -610,16 +612,16 @@ static void esp_thread_entry(void *param)
             struct SensorData local = sensor_data;
             rt_mutex_release(&sensor_mutex);
             char payload[128];
+            int t_i = (int)local.temp, t_d = (int)((local.temp - t_i) * 10 + 0.5f);
+            int h_i = (int)local.humi, h_d = (int)((local.humi - h_i) * 10 + 0.5f);
+            if (t_d >= 10) { t_i++; t_d -= 10; }
+            if (h_d >= 10) { h_i++; h_d -= 10; }
             snprintf(payload, sizeof(payload),
                 "t=%d.%d h=%d.%d l=%u d=%u",
-                (int)local.temp, (int)((local.temp-(int)local.temp)*10+0.5f),
-                (int)local.humi, (int)((local.humi-(int)local.humi)*10+0.5f),
-                local.light, local.distance);
-            {
-                char dbg[160];
-                snprintf(dbg, sizeof(dbg), "\r\n[pub] %s\r\n", payload);
-                uart_puts(dbg);
-            }
+                t_i, t_d, h_i, h_d, local.light, local.distance);
+            uart_puts("\r\n[pub] ");
+            uart_puts(payload);
+            uart_puts("\r\n");
             esp_result = ESP8266_MqttPub("sensor/data", (uint8_t*)payload, strlen(payload));
         }
         else if (cmd == 4) {
@@ -781,7 +783,7 @@ int main(void)
     if (tid) rt_thread_startup(tid);
     tid = rt_thread_create("keys", key_thread_entry,    RT_NULL, 384,  10, 10);
     if (tid) rt_thread_startup(tid);
-    tid = rt_thread_create("shell", shell_thread_entry,  RT_NULL, 768,  13, 10);
+    tid = rt_thread_create("shell", shell_thread_entry,  RT_NULL, 1024, 13, 10);
     if (tid) rt_thread_startup(tid);
     tid = rt_thread_create("esp",   esp_thread_entry,    RT_NULL, 1024, 14, 10);
     if (tid) rt_thread_startup(tid);
