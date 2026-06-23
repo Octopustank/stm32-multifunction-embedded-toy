@@ -353,6 +353,12 @@ static void shell_thread_entry(void *param)
     uart_puts("rtt> ");
 
     while (1) {
+        /* yield UART to game thread during serial snake */
+        if (game_mode == 1 && g_serial_snake) {
+            rt_thread_mdelay(50);
+            continue;
+        }
+
         int c = uart_getc();
         if (c < 0) { rt_thread_mdelay(10); continue; }
 
@@ -707,12 +713,13 @@ static void game_thread_entry(void *param)
         if (game_mode == 2) {
             const uint8_t all[8]  = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
             const uint8_t none[8] = {0,0,0,0,0,0,0,0};
-            for (int i = 0; i < 3 && game_mode == 2; i++) {
+            int i;
+            for (i = 0; i < 3 && game_mode == 2; i++) {
                 max7219_display(all);  rt_thread_mdelay(150);
                 if (game_mode != 2) break;
                 max7219_display(none); rt_thread_mdelay(150);
             }
-            if (game_mode == 2) rt_thread_mdelay(500);
+            if (i >= 3) game_mode = 0;  /* auto-exit after 3 blinks */
             continue;
         }
     }
