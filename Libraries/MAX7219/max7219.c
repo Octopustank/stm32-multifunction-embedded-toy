@@ -48,13 +48,13 @@ void max7219_init(void)
     HAL_GPIO_Init(MAX7219_CS_PORT, &s);
 
     HAL_GPIO_WritePin(MAX7219_CS_PORT, MAX7219_CS_PIN, GPIO_PIN_SET);
+    HAL_Delay(100);
 
-    max7219_send16(MAX7219_REG_SHUTDOWN,  0x00);  /* shutdown during config */
-    max7219_send16(MAX7219_REG_DISPTEST,  0x00);  /* normal mode */
-    max7219_send16(MAX7219_REG_SCANLIMIT, 0x07);  /* all 8 digits */
-    max7219_send16(MAX7219_REG_DECODE,    0x00);  /* no BCD decode */
-    max7219_send16(MAX7219_REG_INTENSITY, 0x02);  /* low brightness */
-    max7219_send16(MAX7219_REG_SHUTDOWN,  0x01);  /* normal operation */
+    max7219_send16(MAX7219_REG_DISPTEST,  0x00);
+    max7219_send16(MAX7219_REG_SCANLIMIT, 0x07);
+    max7219_send16(MAX7219_REG_DECODE,    0x00);
+    max7219_send16(MAX7219_REG_INTENSITY, 0x01);
+    max7219_send16(MAX7219_REG_SHUTDOWN,  0x01);
 }
 
 void max7219_display(const uint8_t pattern[8])
