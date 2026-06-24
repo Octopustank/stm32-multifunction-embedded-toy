@@ -82,11 +82,10 @@ static int         g_serial_snake; /* serial input mode */
 static char mqtt_ssid[32], mqtt_pwd[32];
 static char mqtt_broker[32], mqtt_port[8], mqtt_client[32];
 static char mqtt_topic[48];
-static char mqtt_sub0[48], mqtt_sub1[48];
+static char mqtt_sub0[48];
 static int  mqtt_connected;
-static int  mqtt_sub0_active, mqtt_sub1_active;
+static int  mqtt_sub0_active;
 static volatile int esp_cmd, esp_result;
-static int  esp_sub_idx;            /* which sub index for cmd 4/5 */
 static struct rt_semaphore esp_go_sem;
 static struct rt_semaphore esp_done_sem;
 
@@ -325,14 +324,12 @@ static void oled_thread_entry(void *param)
         }
         snprintf(line2, sizeof(line2), "L:%u D:%ucm", local.light, local.distance);
 
-        int sub_cnt = (mqtt_sub0_active ? 1 : 0) + (mqtt_sub1_active ? 1 : 0);
-        snprintf(line3, sizeof(line3), "W:%s M:%s S:%d",
+        snprintf(line3, sizeof(line3), "W:%s M:%s",
             mqtt_connected >= 1 ? "OK" : (mqtt_connected < 0 ? "ER" : "--"),
-            mqtt_connected == 2 ? "OK" : (mqtt_connected < -1 ? "ER" : "--"),
-            sub_cnt);
+            mqtt_connected == 2 ? "OK" : (mqtt_connected < -1 ? "ER" : "--"));
 
-        if (sub_cnt)
-            snprintf(line4, sizeof(line4), "%.13s", mqtt_sub0_active ? mqtt_sub0 : mqtt_sub1);
+        if (mqtt_sub0_active && mqtt_sub0[0])
+            snprintf(line4, sizeof(line4), "%.18s", mqtt_sub0);
         else
             snprintf(line4, sizeof(line4), "Sub: --");
 
@@ -456,7 +453,7 @@ static void shell_thread_entry(void *param)
             hist_cur = 0;
 
             /* ---- command dispatch ---- */
-            if      (!strcmp(cmd, "help")) uart_puts("help stat led on|off snake autopub subecho subexec\r\nwifi SSID PWD   mqtt IP PORT ID   connect   mqttconn\r\npub   sub TOPIC   sub2 TOPIC   unsub   unsub2\r\n");
+            if      (!strcmp(cmd, "help")) uart_puts("help stat led on|off snake autopub subecho subexec\r\nwifi SSID PWD   mqtt IP PORT ID   connect   mqttconn\r\npub   sub TOPIC   unsub\r\n");
             else if (!strcmp(cmd, "stat")) {
                 rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
                 struct SensorData local = sensor_data;
@@ -478,9 +475,8 @@ static void shell_thread_entry(void *param)
                     mqtt_connected==2 ? "OK" : (mqtt_connected==-2 ? "FAIL" : "--"));
                 uart_puts(buf);
 
-                snprintf(buf, sizeof(buf), "S0:%.24s  S1:%.24s\r\n",
-                    mqtt_sub0_active ? mqtt_sub0 : "-",
-                    mqtt_sub1_active ? mqtt_sub1 : "-");
+                snprintf(buf, sizeof(buf), "Sub:%.48s\r\n",
+                    mqtt_sub0_active ? mqtt_sub0 : "-");
                 uart_puts(buf);
 
                 snprintf(buf, sizeof(buf), "apub:%d"
@@ -571,7 +567,7 @@ static void shell_thread_entry(void *param)
             }
             else if (!strncmp(cmd, "sub ", 4)) {
                 strncpy(mqtt_topic, cmd + 4, sizeof(mqtt_topic) - 1);
-                esp_sub_idx = 0; esp_cmd = 4;
+                esp_cmd = 4;
                 rt_sem_release(&esp_go_sem);
                 if (rt_sem_take(&esp_done_sem, 10000) == RT_EOK && esp_result == 0) {
                     strncpy(mqtt_sub0, mqtt_topic, sizeof(mqtt_sub0) - 1);
@@ -579,33 +575,14 @@ static void shell_thread_entry(void *param)
                     uart_puts("sub ok\r\n");
                 } else uart_puts("sub fail\r\n");
             }
-            else if (!strncmp(cmd, "sub2 ", 5)) {
-                strncpy(mqtt_topic, cmd + 5, sizeof(mqtt_topic) - 1);
-                esp_sub_idx = 1; esp_cmd = 4;
-                rt_sem_release(&esp_go_sem);
-                if (rt_sem_take(&esp_done_sem, 10000) == RT_EOK && esp_result == 0) {
-                    strncpy(mqtt_sub1, mqtt_topic, sizeof(mqtt_sub1) - 1);
-                    mqtt_sub1_active = 1;
-                    uart_puts("sub2 ok\r\n");
-                } else uart_puts("sub2 fail\r\n");
-            }
             else if (!strcmp(cmd, "unsub")) {
                 strncpy(mqtt_topic, mqtt_sub0, sizeof(mqtt_topic) - 1);
-                esp_sub_idx = 0; esp_cmd = 5;
+                esp_cmd = 5;
                 rt_sem_release(&esp_go_sem);
                 if (rt_sem_take(&esp_done_sem, 10000) == RT_EOK && esp_result == 0) {
                     mqtt_sub0_active = 0;
                     uart_puts("unsub ok\r\n");
                 } else uart_puts("unsub fail\r\n");
-            }
-            else if (!strcmp(cmd, "unsub2")) {
-                strncpy(mqtt_topic, mqtt_sub1, sizeof(mqtt_topic) - 1);
-                esp_sub_idx = 1; esp_cmd = 5;
-                rt_sem_release(&esp_go_sem);
-                if (rt_sem_take(&esp_done_sem, 10000) == RT_EOK && esp_result == 0) {
-                    mqtt_sub1_active = 0;
-                    uart_puts("unsub2 ok\r\n");
-                } else uart_puts("unsub2 fail\r\n");
             }
             else { uart_puts("? try: help\r\n"); }
 
@@ -663,10 +640,10 @@ static void esp_thread_entry(void *param)
             esp_result = ESP8266_MqttPub("sensor/data", (uint8_t*)payload, strlen(payload));
         }
         else if (cmd == 4) {
-            esp_result = ESP8266_MqttSub(esp_sub_idx, mqtt_topic, 0);
+            esp_result = ESP8266_MqttSub(0, mqtt_topic, 0);
         }
         else if (cmd == 5) {
-            esp_result = ESP8266_MqttUnsub(esp_sub_idx, mqtt_topic);
+            esp_result = ESP8266_MqttUnsub(0, mqtt_topic);
         }
         else if (cmd == 7) {
             esp_result = ESP8266_MqttPub(mqtt_topic, (uint8_t*)"hello", 5);
@@ -933,7 +910,7 @@ int main(void)
             rt_mutex_release(&i2c_mutex);
 
             strcpy(mqtt_topic, AUTO_SUB_TOPIC);
-            esp_sub_idx = 0; esp_cmd = 4;
+            esp_cmd = 4;
             rt_sem_release(&esp_go_sem);
             ok = (rt_sem_take(&esp_done_sem, AUTO_TIMEOUT_SUB) == RT_EOK && esp_result == 0);
             if (ok) { strncpy(mqtt_sub0, mqtt_topic, sizeof(mqtt_sub0)-1); mqtt_sub0_active = 1; }
