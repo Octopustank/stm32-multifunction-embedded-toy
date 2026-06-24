@@ -89,7 +89,9 @@ static struct rt_semaphore esp_go_sem;
 static struct rt_semaphore esp_done_sem;
 
 static int        autopub_enabled = AUTO_PUB_ENABLE;
-static int        sub_echo = 1;            /* forward MQTT sub msgs to terminal */
+#if AUTO_SUB_ECHO
+static int        sub_echo = AUTO_SUB_ECHO;
+#endif
 static rt_tick_t  last_autopub;
 
 /* ---- Forward Declarations ------------------------------------------------ */
@@ -494,10 +496,12 @@ static void shell_thread_entry(void *param)
                 autopub_enabled = !autopub_enabled;
                 uart_puts(autopub_enabled ? "autopub ON\r\n" : "autopub OFF\r\n");
             }
+#if AUTO_SUB_ECHO
             else if (!strcmp(cmd, "subecho")) {
                 sub_echo = !sub_echo;
                 uart_puts(sub_echo ? "subecho ON\r\n" : "subecho OFF\r\n");
             }
+#endif
             else if (!strcmp(cmd, "snake"))  { snake_init(); game_mode = 1; g_serial_snake = 1; uart_puts("WASD=move Enter=end Ctrl+C=abort\r\n"); }
             else if (!strncmp(cmd, "wifi ", 5)) {
                 char *sp = strchr(cmd + 5, ' ');
@@ -646,6 +650,7 @@ static void esp_thread_entry(void *param)
             esp_result = ESP8266_MqttPub(mqtt_topic, (uint8_t*)"hello", 5);
         }
         else if (cmd == 6) {
+#if AUTO_SUB_ECHO
             const char *b = esp_get_buf();
             int len = esp_get_buf_len();
             if (len > 0 && sub_echo) {
@@ -664,7 +669,10 @@ static void esp_thread_entry(void *param)
                     esp_clear_buf();
                 }
             }
-            if (len > 512) esp_clear_buf();   /* flush stale data */
+            if (len > 512) esp_clear_buf();
+#else
+            if (esp_get_buf_len() > 512) esp_clear_buf();
+#endif
 
             if (autopub_enabled && mqtt_connected == 2) {
                 rt_tick_t now = rt_tick_get();

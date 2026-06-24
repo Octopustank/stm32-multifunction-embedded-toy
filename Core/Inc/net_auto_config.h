@@ -19,5 +19,6 @@
 #define AUTO_TIMEOUT_SUB     10000
 #define AUTO_PUB_ENABLE     1
 #define AUTOPUB_INTERVAL_S     5
+#define AUTO_SUB_ECHO     1
 
 #endif /* __NET_AUTO_CONFIG_H__ */

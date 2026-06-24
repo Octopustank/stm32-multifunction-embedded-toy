@@ -106,3 +106,14 @@ menu "Auto-Publish"
 		help
 		  Interval between automatic sensor data publications.
 endmenu
+
+menu "Sub Echo"
+	config AUTO_SUB_ECHO
+		bool "Forward MQTT subscription messages to terminal"
+		default y
+		help
+		  If enabled, incoming MQTT subscription messages (+MQTTSUBRECV)
+		  are printed to the shell terminal.  The 'subecho' shell command
+		  can toggle this at runtime.  When disabled, the feature and
+		  command are removed entirely (zero flash/RAM cost).
+endmenu
