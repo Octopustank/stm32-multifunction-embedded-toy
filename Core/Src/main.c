@@ -83,13 +83,13 @@ static char mqtt_ssid[32], mqtt_pwd[32];
 static char mqtt_broker[32], mqtt_port[8], mqtt_client[32];
 static char mqtt_topic[48];
 static int  mqtt_connected;
-static int  mqtt_sub_active;        /* 1 if subscribed to mqtt_sub_topic */
-static char mqtt_sub_topic[48];     /* currently subscribed topic */
+static int  mqtt_sub_active;        /* 1 if subscribed to mqtt_topic */
 static volatile int esp_cmd, esp_result;
 static struct rt_semaphore esp_go_sem;
 static struct rt_semaphore esp_done_sem;
 
 static int        autopub_enabled = AUTO_PUB_ENABLE;
+static int        sub_echo = 1;            /* forward MQTT sub msgs to terminal */
 static rt_tick_t  last_autopub;
 
 /* ---- Forward Declarations ------------------------------------------------ */
@@ -322,8 +322,8 @@ static void oled_thread_entry(void *param)
             mqtt_connected >= 1 ? "OK" : (mqtt_connected < 0 ? "ER" : "--"),
             mqtt_connected == 2 ? "OK" : (mqtt_connected < -1 ? "ER" : "--"));
 
-        if (mqtt_sub_active && mqtt_sub_topic[0])
-            snprintf(line4, sizeof(line4), "Sub: %.13s", mqtt_sub_topic);
+        if (mqtt_sub_active && mqtt_topic[0])
+            snprintf(line4, sizeof(line4), "Sub: %.13s", mqtt_topic);
         else
             snprintf(line4, sizeof(line4), "Sub: --");
 
@@ -342,16 +342,11 @@ static void oled_thread_entry(void *param)
     }
 }
 
-/* ---- Shell Thread (UART command parser with history + autocomplete) ------ */
+/* ---- Shell Thread (UART command parser with history) -------------------- */
 
-#define HIST_SIZE  8
-#define HIST_LEN   32
-#define CMD_BUF    32
-
-static const char *shell_cmds[] = {
-    "help", "temp", "humi", "light", "dist", "stat",
-    "led on", "led off", "snake", "autopub", "sublist", NULL
-};
+#define HIST_SIZE  4
+#define HIST_LEN   24
+#define CMD_BUF    24
 
 static void shell_thread_entry(void *param)
 {
@@ -432,35 +427,6 @@ static void shell_thread_entry(void *param)
             continue;
         }
 
-        /* ---- Tab: autocomplete ---- */
-        if (c == '\t') {
-            int match_idx = -1, match_cnt = 0;
-            for (int i = 0; shell_cmds[i]; i++) {
-                if (!strncmp(shell_cmds[i], cmd, pos)) {
-                    match_idx = i;
-                    match_cnt++;
-                }
-            }
-            if (match_cnt == 1) {
-                /* unique match: complete */
-                while (pos--) uart_puts("\b \b");
-                uart_puts(shell_cmds[match_idx]);
-                strcpy(cmd, shell_cmds[match_idx]);
-                pos = strlen(cmd);
-            } else if (match_cnt > 1) {
-                /* multiple: list them */
-                uart_puts("\r\n");
-                for (int i = 0; shell_cmds[i]; i++)
-                    if (!strncmp(shell_cmds[i], cmd, pos)) {
-                        uart_puts(shell_cmds[i]);
-                        uart_puts("  ");
-                    }
-                uart_puts("\r\nrtt> ");
-                uart_puts(cmd);
-            }
-            continue;
-        }
-
         /* ---- Echo printable ---- */
         uart_putc((char)c);
 
@@ -481,7 +447,7 @@ static void shell_thread_entry(void *param)
             hist_cur = 0;
 
             /* ---- command dispatch ---- */
-            if      (!strcmp(cmd, "help")) uart_puts("help temp humi light dist stat led on|off snake autopub sublist\r\nwifi SSID PWD   mqtt IP PORT ID   connect   mqttconn\r\npub   sub TOPIC   unsub TOPIC\r\n");
+            if      (!strcmp(cmd, "help")) uart_puts("help temp humi light dist stat led on|off snake autopub sublist subecho\r\nwifi SSID PWD   mqtt IP PORT ID   connect   mqttconn\r\npub   sub TOPIC   unsub TOPIC\r\n");
             else if (!strcmp(cmd, "stat")) {
                 rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
                 struct SensorData local = sensor_data;
@@ -527,6 +493,10 @@ static void shell_thread_entry(void *param)
             else if (!strcmp(cmd, "autopub")) {
                 autopub_enabled = !autopub_enabled;
                 uart_puts(autopub_enabled ? "autopub ON\r\n" : "autopub OFF\r\n");
+            }
+            else if (!strcmp(cmd, "subecho")) {
+                sub_echo = !sub_echo;
+                uart_puts(sub_echo ? "subecho ON\r\n" : "subecho OFF\r\n");
             }
             else if (!strcmp(cmd, "snake"))  { snake_init(); game_mode = 1; g_serial_snake = 1; uart_puts("WASD=move Enter=end Ctrl+C=abort\r\n"); }
             else if (!strncmp(cmd, "wifi ", 5)) {
@@ -586,7 +556,6 @@ static void shell_thread_entry(void *param)
                     if (esp_result == 0) {
                         uart_puts("sub ok\r\n");
                         mqtt_sub_active = 1;
-                        strncpy(mqtt_sub_topic, mqtt_topic, sizeof(mqtt_sub_topic) - 1);
                     }
                     else { char b[32]; snprintf(b, sizeof(b), "sub fail %d\r\n", (int)esp_result); uart_puts(b); }
                 } else uart_puts("sub timeout\r\n");
@@ -604,11 +573,11 @@ static void shell_thread_entry(void *param)
                 } else uart_puts("unsub timeout\r\n");
             }
             else if (!strcmp(cmd, "sublist")) {
-                if (!mqtt_sub_active || !mqtt_sub_topic[0])
+                if (!mqtt_sub_active || !mqtt_topic[0])
                     uart_puts("(no subscriptions)\r\n");
                 else {
                     uart_puts("Sub: ");
-                    uart_puts(mqtt_sub_topic);
+                    uart_puts(mqtt_topic);
                     uart_puts("\r\n");
                 }
             }
@@ -679,7 +648,7 @@ static void esp_thread_entry(void *param)
         else if (cmd == 6) {
             const char *b = esp_get_buf();
             int len = esp_get_buf_len();
-            if (len > 0) {
+            if (len > 0 && sub_echo) {
                 char *p = strstr((char*)b, "+MQTTSUBRECV");
                 if (p) {
                     char *eol = strpbrk(p, "\r\n");
@@ -695,6 +664,7 @@ static void esp_thread_entry(void *param)
                     esp_clear_buf();
                 }
             }
+            if (len > 512) esp_clear_buf();   /* flush stale data */
 
             if (autopub_enabled && mqtt_connected == 2) {
                 rt_tick_t now = rt_tick_get();
@@ -928,10 +898,7 @@ int main(void)
             esp_cmd = 4;
             rt_sem_release(&esp_go_sem);
             ok = (rt_sem_take(&esp_done_sem, AUTO_TIMEOUT_SUB) == RT_EOK && esp_result == 0);
-            if (ok) {
-                mqtt_sub_active = 1;
-                strncpy(mqtt_sub_topic, mqtt_topic, sizeof(mqtt_sub_topic) - 1);
-            }
+            if (ok) mqtt_sub_active = 1;
 
             rt_mutex_take(&i2c_mutex, RT_WAITING_FOREVER);
             ssd1306_Fill(Black);
