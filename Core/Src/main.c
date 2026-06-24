@@ -92,7 +92,7 @@ static int        autopub_enabled = AUTO_PUB_ENABLE;
 #if AUTO_SUB_ECHO
 static int        sub_echo = AUTO_SUB_ECHO;
 #if AUTO_SUB_EXEC
-static int        sub_exec;
+static int        sub_exec = AUTO_SUB_EXEC;
 #endif
 #endif
 static rt_tick_t  last_autopub;
@@ -460,9 +460,24 @@ static void shell_thread_entry(void *param)
                 char buf[96];
                 int ti = (int)local.temp, td = (int)((local.temp - ti) * 10 + 0.5f);
                 int hi = (int)local.humi, hd = (int)((local.humi - hi) * 10 + 0.5f);
-                snprintf(buf, sizeof(buf), "T:%d.%dC H:%d.%d%% Light:%u Dist:%ucm ok:%d esp:%d sub:%d apub:%d\r\n",
-                         ti, td, hi, hd, local.light, local.distance, local.is_valid, mqtt_connected,
-                         mqtt_sub_active, autopub_enabled);
+                snprintf(buf, sizeof(buf),
+                    "T:%d.%dC H:%d.%d%% Light:%u Dist:%ucm ok:%d esp:%d sub:%d apub:%d"
+#if AUTO_SUB_ECHO
+                    " echo:%d"
+#endif
+#if AUTO_SUB_EXEC
+                    " exec:%d"
+#endif
+                    "\r\n",
+                    ti, td, hi, hd, local.light, local.distance, local.is_valid, mqtt_connected,
+                    mqtt_sub_active, autopub_enabled
+#if AUTO_SUB_ECHO
+                    , sub_echo
+#endif
+#if AUTO_SUB_EXEC
+                    , sub_exec
+#endif
+                    );
                 uart_puts(buf);
             }
             else if (!strcmp(cmd, "temp")) {

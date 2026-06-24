@@ -5,21 +5,21 @@
 #ifndef __NET_AUTO_CONFIG_H__
 #define __NET_AUTO_CONFIG_H__
 
-#define AUTO_WIFI_ENABLE     0
-#define AUTO_WIFI_SSID     ""
-#define AUTO_WIFI_PWD     ""
+#define AUTO_WIFI_ENABLE     1
+#define AUTO_WIFI_SSID     "Octopustank"
+#define AUTO_WIFI_PWD     "1145141919810"
 #define AUTO_TIMEOUT_WIFI     25000
-#define AUTO_MQTT_ENABLE     0
-#define AUTO_MQTT_IP     ""
+#define AUTO_MQTT_ENABLE     1
+#define AUTO_MQTT_IP     "192.168.43.6"
 #define AUTO_MQTT_PORT     "1883"
-#define AUTO_MQTT_CLIENT     ""
+#define AUTO_MQTT_CLIENT     "stm32"
 #define AUTO_TIMEOUT_MQTT     15000
-#define AUTO_SUB_ENABLE     0
-#define AUTO_SUB_TOPIC     ""
+#define AUTO_SUB_ENABLE     1
+#define AUTO_SUB_TOPIC     "master/data"
 #define AUTO_TIMEOUT_SUB     10000
-#define AUTO_PUB_ENABLE     0
+#define AUTO_PUB_ENABLE     1
 #define AUTOPUB_INTERVAL_S     5
 #define AUTO_SUB_ECHO     1
-#define AUTO_SUB_EXEC     0
+#define AUTO_SUB_EXEC     1
 
 #endif /* __NET_AUTO_CONFIG_H__ */
