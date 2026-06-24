@@ -464,16 +464,33 @@ static void shell_thread_entry(void *param)
                 char buf[96];
                 int ti = (int)local.temp, td = (int)((local.temp - ti) * 10 + 0.5f);
                 int hi = (int)local.humi, hd = (int)((local.humi - hi) * 10 + 0.5f);
-                snprintf(buf, sizeof(buf),
-                    "T:%d.%dC H:%d.%d%% L:%u D:%ucm ok:%d esp:%d apub:%d"
+
+                snprintf(buf, sizeof(buf), "T:%d.%dC H:%d.%d%% L:%u D:%ucm ok:%d\r\n",
+                    ti, td, hi, hd, local.light, local.distance, local.is_valid);
+                uart_puts(buf);
+
+                snprintf(buf, sizeof(buf), "WiFi:%.24s (%s)  MQTT:%.16s:%.6s %.24s (%s)\r\n",
+                    mqtt_ssid[0] ? mqtt_ssid : "-",
+                    mqtt_connected>=1 ? "OK" : (mqtt_connected==-1 ? "FAIL" : "--"),
+                    mqtt_broker[0] ? mqtt_broker : "-",
+                    mqtt_port,
+                    mqtt_client[0] ? mqtt_client : "-",
+                    mqtt_connected==2 ? "OK" : (mqtt_connected==-2 ? "FAIL" : "--"));
+                uart_puts(buf);
+
+                snprintf(buf, sizeof(buf), "S0:%.24s  S1:%.24s\r\n",
+                    mqtt_sub0_active ? mqtt_sub0 : "-",
+                    mqtt_sub1_active ? mqtt_sub1 : "-");
+                uart_puts(buf);
+
+                snprintf(buf, sizeof(buf), "apub:%d"
 #if AUTO_SUB_ECHO
                     " echo:%d"
 #endif
 #if AUTO_SUB_EXEC
                     " exec:%d"
 #endif
-                    " S0:%.20s S1:%.20s\r\n",
-                    ti, td, hi, hd, local.light, local.distance, local.is_valid, mqtt_connected,
+                    "\r\n",
                     autopub_enabled
 #if AUTO_SUB_ECHO
                     , sub_echo
@@ -481,8 +498,6 @@ static void shell_thread_entry(void *param)
 #if AUTO_SUB_EXEC
                     , sub_exec
 #endif
-                    , mqtt_sub0_active ? mqtt_sub0 : "-"
-                    , mqtt_sub1_active ? mqtt_sub1 : "-"
                     );
                 uart_puts(buf);
             }
