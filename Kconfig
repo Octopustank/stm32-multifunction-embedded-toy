@@ -115,5 +115,14 @@ menu "Sub Echo"
 		  If enabled, incoming MQTT subscription messages (+MQTTSUBRECV)
 		  are printed to the shell terminal.  The 'subecho' shell command
 		  can toggle this at runtime.  When disabled, the feature and
-		  command are removed entirely (zero flash/RAM cost).
+		  commands are removed entirely (zero flash/RAM cost).
+
+	config AUTO_SUB_EXEC
+		bool "Execute MQTT payload as shell command"
+		default n
+		depends on AUTO_SUB_ECHO
+		help
+		  When enabled, MQTT subscription payloads are injected into the
+		  shell as commands (e.g. 'led off' turns off LEDs).  Toggle at
+		  runtime with 'subexec'.  Disable for display-only forwarding.
 endmenu

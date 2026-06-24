@@ -19,6 +19,7 @@ void MX_USART2_UART_Init(void);
 void uart_putc(char c);
 void uart_puts(const char *s);
 int  uart_getc(void);
+void uart_inject(const char *s);
 
 /* ---- USART1 (ESP8266, PA9=TX / PA10=RX) ---- */
 extern UART_HandleTypeDef huart1;

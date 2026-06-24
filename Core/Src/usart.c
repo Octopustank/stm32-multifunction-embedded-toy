@@ -1,5 +1,7 @@
 #include "usart.h"
 #include "esp8266_mqtt.h"
+#include <rtthread.h>
+#include <rthw.h>
 
 UART_HandleTypeDef huart2;
 
@@ -121,6 +123,20 @@ void uart_putc(char c)
 void uart_puts(const char *s)
 {
     while (*s) uart_putc(*s++);
+}
+
+void uart_inject(const char *s)
+{
+    rt_base_t level = rt_hw_interrupt_disable();
+    while (*s) {
+        uint16_t next = (uart_rx_head + 1) % UART_RX_BUF_SIZE;
+        if (next != uart_rx_tail) {
+            uart_rx_buf[uart_rx_head] = (uint8_t)*s;
+            uart_rx_head = next;
+        }
+        s++;
+    }
+    rt_hw_interrupt_enable(level);
 }
 
 /* =================================================================== *

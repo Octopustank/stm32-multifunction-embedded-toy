@@ -91,6 +91,9 @@ static struct rt_semaphore esp_done_sem;
 static int        autopub_enabled = AUTO_PUB_ENABLE;
 #if AUTO_SUB_ECHO
 static int        sub_echo = AUTO_SUB_ECHO;
+#if AUTO_SUB_EXEC
+static int        sub_exec;
+#endif
 #endif
 static rt_tick_t  last_autopub;
 
@@ -449,7 +452,7 @@ static void shell_thread_entry(void *param)
             hist_cur = 0;
 
             /* ---- command dispatch ---- */
-            if      (!strcmp(cmd, "help")) uart_puts("help temp humi light dist stat led on|off snake autopub sublist subecho\r\nwifi SSID PWD   mqtt IP PORT ID   connect   mqttconn\r\npub   sub TOPIC   unsub TOPIC\r\n");
+            if      (!strcmp(cmd, "help")) uart_puts("help temp humi light dist stat led on|off snake autopub sublist subecho subexec\r\nwifi SSID PWD   mqtt IP PORT ID   connect   mqttconn\r\npub   sub TOPIC   unsub TOPIC\r\n");
             else if (!strcmp(cmd, "stat")) {
                 rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
                 struct SensorData local = sensor_data;
@@ -501,6 +504,12 @@ static void shell_thread_entry(void *param)
                 sub_echo = !sub_echo;
                 uart_puts(sub_echo ? "subecho ON\r\n" : "subecho OFF\r\n");
             }
+#if AUTO_SUB_EXEC
+            else if (!strcmp(cmd, "subexec")) {
+                sub_exec = !sub_exec;
+                uart_puts(sub_exec ? "subexec ON\r\n" : "subexec OFF\r\n");
+            }
+#endif
 #endif
             else if (!strcmp(cmd, "snake"))  { snake_init(); game_mode = 1; g_serial_snake = 1; uart_puts("WASD=move Enter=end Ctrl+C=abort\r\n"); }
             else if (!strncmp(cmd, "wifi ", 5)) {
@@ -653,7 +662,7 @@ static void esp_thread_entry(void *param)
 #if AUTO_SUB_ECHO
             const char *b = esp_get_buf();
             int len = esp_get_buf_len();
-            if (len > 0 && sub_echo) {
+            if (len > 0) {
                 char *p = strstr((char*)b, "+MQTTSUBRECV");
                 if (p) {
                     char *eol = strpbrk(p, "\r\n");
@@ -661,9 +670,17 @@ static void esp_thread_entry(void *param)
                         *eol = '\0';
                         char *last = strrchr(p, ',');
                         if (last) {
-                            uart_puts("\r\n[MQTT] ");
-                            uart_puts(last + 1);
-                            uart_puts("\r\n");
+#if AUTO_SUB_EXEC
+                            if (sub_exec) {
+                                uart_inject(last + 1);
+                                uart_inject("\r\n");
+                            } else
+#endif
+                            if (sub_echo) {
+                                uart_puts("\r\n[MQTT] ");
+                                uart_puts(last + 1);
+                                uart_puts("\r\nrtt> ");
+                            }
                         }
                     }
                     esp_clear_buf();
