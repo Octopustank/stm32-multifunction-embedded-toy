@@ -11,3 +11,5 @@ build/
 .codegraph
 .omo/
 compile_commands.json
+.config
+.config.old
