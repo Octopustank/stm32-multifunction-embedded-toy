@@ -216,7 +216,11 @@ make                      # 直接编译 (头文件已是最新)
 
 运行时命令：
 - `autopub` — 切换后台弱周期自动发布 (每 N 秒, N 由 menuconfig 配置)
+- `subecho` — 切换 MQTT 订阅消息转发到终端 (仅在 `AUTO_SUB_ECHO=y` 时编译)
+- `sublist` — 显示当前订阅的 topic
 - 手动 `wifi` / `connect` / `mqtt` / `mqttconn` / `sub` / `pub` 始终可用
+
+预编译控制：`#if AUTO_XXX` 宏在功能禁用时完全消除代码 (WiFi/MQTT/Sub/SubEcho)，零 flash/RAM 开销。
 
 ## Git 历史
 
