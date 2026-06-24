@@ -297,7 +297,7 @@ static void sensor_thread_entry(void *param)
 
 static void oled_thread_entry(void *param)
 {
-    char line1[48], line2[32], line3[32], line4[48];
+    char line1[32], line2[24], line3[16], line4[24];
     rt_thread_mdelay(2000);
 
     while (1) {
@@ -627,7 +627,7 @@ static void esp_thread_entry(void *param)
             rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
             struct SensorData local = sensor_data;
             rt_mutex_release(&sensor_mutex);
-            char payload[128];
+            char payload[64];
             int t_i = (int)local.temp, t_d = (int)((local.temp - t_i) * 10 + 0.5f);
             int h_i = (int)local.humi, h_d = (int)((local.humi - h_i) * 10 + 0.5f);
             if (t_d >= 10) { t_i++; t_d -= 10; }
@@ -663,7 +663,7 @@ static void esp_thread_entry(void *param)
                         if (last) {
                             uart_puts("\r\n[MQTT] ");
                             uart_puts(last + 1);
-                            uart_puts("\r\nrtt> ");
+                            uart_puts("\r\n");
                         }
                     }
                     esp_clear_buf();
@@ -681,7 +681,7 @@ static void esp_thread_entry(void *param)
                     rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
                     struct SensorData local = sensor_data;
                     rt_mutex_release(&sensor_mutex);
-                    char payload[128];
+                    char payload[64];
                     int t_i = (int)local.temp, t_d = (int)((local.temp - t_i) * 10 + 0.5f);
                     int h_i = (int)local.humi, h_d = (int)((local.humi - h_i) * 10 + 0.5f);
                     if (t_d >= 10) { t_i++; t_d -= 10; }
@@ -823,7 +823,7 @@ int main(void)
     rt_thread_t tid;
     tid = rt_thread_create("sens", sensor_thread_entry, RT_NULL, 768,  8, 10);
     if (tid) rt_thread_startup(tid);
-    tid = rt_thread_create("oled", oled_thread_entry,   RT_NULL, 1024, 12, 10);
+    tid = rt_thread_create("oled", oled_thread_entry,   RT_NULL, 896,  12, 10);
     if (tid) rt_thread_startup(tid);
     tid = rt_thread_create("led",  led_thread_entry,    RT_NULL, 512,  11, 10);
     if (tid) rt_thread_startup(tid);
@@ -831,7 +831,7 @@ int main(void)
     if (tid) rt_thread_startup(tid);
     tid = rt_thread_create("shell", shell_thread_entry,  RT_NULL, 1024, 13, 10);
     if (tid) rt_thread_startup(tid);
-    tid = rt_thread_create("esp",   esp_thread_entry,    RT_NULL, 1024, 14, 10);
+    tid = rt_thread_create("esp",   esp_thread_entry,    RT_NULL, 896,  14, 10);
     if (tid) rt_thread_startup(tid);
     tid = rt_thread_create("game",  game_thread_entry,   RT_NULL, 640,   9, 10);
     if (tid) rt_thread_startup(tid);
