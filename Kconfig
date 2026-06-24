@@ -1,0 +1,108 @@
+mainmenu "RT-Thread Nano Network Auto-Config"
+
+menu "WiFi Auto-Connect"
+	config AUTO_WIFI_ENABLE
+		bool "Auto-connect WiFi on boot"
+		default n
+		help
+		  If enabled, the system will attempt WiFi connection at boot
+		  using the SSID and password configured below.
+
+	config AUTO_WIFI_SSID
+		string "WiFi SSID"
+		default ""
+		depends on AUTO_WIFI_ENABLE
+		help
+		  WiFi network name.  Leave empty to skip.
+
+	config AUTO_WIFI_PWD
+		string "WiFi Password"
+		default ""
+		depends on AUTO_WIFI_ENABLE
+		help
+		  WiFi password.
+
+	config AUTO_TIMEOUT_WIFI
+		int "WiFi connect timeout (ms)"
+		default 25000
+		depends on AUTO_WIFI_ENABLE
+		help
+		  Maximum time to wait for WiFi connection before giving up.
+endmenu
+
+menu "MQTT Auto-Connect"
+	config AUTO_MQTT_ENABLE
+		bool "Auto-connect MQTT on boot"
+		default n
+		help
+		  If enabled, the system will connect to the MQTT broker at boot.
+		  Requires WiFi to be connected first.
+
+	config AUTO_MQTT_IP
+		string "MQTT Broker IP / hostname"
+		default ""
+		depends on AUTO_MQTT_ENABLE
+		help
+		  MQTT broker address.
+
+	config AUTO_MQTT_PORT
+		string "MQTT Broker port"
+		default "1883"
+		depends on AUTO_MQTT_ENABLE
+		help
+		  MQTT broker TCP port (usually 1883).
+
+	config AUTO_MQTT_CLIENT
+		string "MQTT Client ID"
+		default ""
+		depends on AUTO_MQTT_ENABLE
+		help
+		  MQTT client identifier.
+
+	config AUTO_TIMEOUT_MQTT
+		int "MQTT connect timeout (ms)"
+		default 15000
+		depends on AUTO_MQTT_ENABLE
+		help
+		  Maximum time to wait for MQTT broker connection.
+endmenu
+
+menu "Subscribe"
+	config AUTO_SUB_ENABLE
+		bool "Auto-subscribe topic on boot"
+		default n
+		help
+		  If enabled, automatically subscribes to the configured topic
+		  after MQTT connection is established.
+
+	config AUTO_SUB_TOPIC
+		string "Subscribe topic"
+		default ""
+		depends on AUTO_SUB_ENABLE
+		help
+		  MQTT topic to subscribe to at boot.
+
+	config AUTO_TIMEOUT_SUB
+		int "Subscribe timeout (ms)"
+		default 10000
+		depends on AUTO_SUB_ENABLE
+		help
+		  Maximum time to wait for subscribe ACK.
+endmenu
+
+menu "Auto-Publish"
+	config AUTO_PUB_ENABLE
+		bool "Enable auto-publish on boot"
+		default n
+		help
+		  If enabled, sensor data (temperature, humidity, light, distance)
+		  will be periodically published to MQTT.  Can be toggled at runtime
+		  with the 'autopub' shell command.
+
+	config AUTOPUB_INTERVAL_S
+		int "Auto-publish interval (seconds)"
+		default 5
+		depends on AUTO_PUB_ENABLE
+		help
+		  Interval between automatic sensor data publications.
+endmenu

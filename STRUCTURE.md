@@ -17,6 +17,7 @@ Project-rttnano/
 │   │   ├── stm32f1xx_hal_conf.h    # HAL 模块开关
 │   │   ├── stm32f1xx_it.h          # 中断 handler 声明
 │   │   └── rtconfig.h              # RTT-Nano 内核配置
+│   │   └── net_auto_config.h         # 网络自动配置 (由 make menuconfig 生成)
 │   └── Src/
 │       ├── main.c                  # RTT 应用入口 (7 个线程)
 │       ├── board.c                 # RTT 板级初始化 (HAL + 时钟 + SysTick + 堆)
@@ -56,6 +57,10 @@ Project-rttnano/
 ├── startup_stm32f103xb.s           # 启动文件 (bl main → bl entry)
 ├── STM32F103XX_FLASH.ld            # 链接脚本 (Flash 64K, RAM 20K)
 ├── Makefile                        # 构建 (arm-none-eabi-gcc, -mcpu=cortex-m3)
+├── Kconfig                          # menuconfig 配置项定义 (网络自动配置)
+├── Config/                          # 配置工具
+│   ├── menuconfig.py                # Kconfiglib menuconfig (curses UI)
+│   └── gen_header.py                # .config → net_auto_config.h 生成器
 ├── Project.ioc                     # CubeMX 工程文件
 └── build/                          # 构建产物
 ```
@@ -183,13 +188,35 @@ test TOPIC            # 发送 "hello" 调试
 ## 构建
 
 ```bash
-make -j$(nproc)          # 编译
-make flash               # 烧录 (OpenOCD + ST-Link)
-make clean               # 清理
+make menuconfig           # 交互式配置网络自动连接参数 (Kconfig)
+make genconfig            # 从 .config 重新生成 net_auto_config.h
+make -j$(nproc)           # 编译
+make flash                # 烧录 (OpenOCD + ST-Link)
+make clean                # 清理
 
 # ~40KB text, ~14KB bss  (64KB/20KB)
 build/Project.bin
 ```
+
+## 网络自动配置
+
+开机自动联网 / MQTT / 订阅 / 发布由 `make menuconfig` (Kconfig) 控制：
+
+```bash
+make menuconfig           # 打开 curses UI 配置
+make genconfig            # 手动重新生成 net_auto_config.h
+make                      # 直接编译 (头文件已是最新)
+```
+
+配置项保存在 `.config`，生成的头文件 `Core/Inc/net_auto_config.h` **不要手动编辑**。
+
+依赖关系：
+- WiFi → MQTT → Sub / AutoPub
+- 任一步失败则停止后续步骤，OLED 显示 FAIL → 继续正常启动
+
+运行时命令：
+- `autopub` — 切换后台弱周期自动发布 (每 N 秒, N 由 menuconfig 配置)
+- 手动 `wifi` / `connect` / `mqtt` / `mqttconn` / `sub` / `pub` 始终可用
 
 ## Git 历史
 

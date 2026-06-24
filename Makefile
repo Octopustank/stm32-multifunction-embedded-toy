@@ -218,7 +218,17 @@ flash: $(BUILD_DIR)/$(TARGET).bin
 #######################################
 clean:
 	-rm -fR $(BUILD_DIR)
-  
+
+#######################################
+# menuconfig / genconfig
+#######################################
+menuconfig:
+	KCONFIG_CONFIG=.config python3 Config/menuconfig.py Kconfig
+	python3 Config/gen_header.py
+
+genconfig:
+	python3 Config/gen_header.py
+
 #######################################
 # dependencies
 #######################################

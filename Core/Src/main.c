@@ -26,6 +26,7 @@
 #include "esp8266_mqtt.h"
 #include "max7219.h"
 #include "snake.h"
+#include "net_auto_config.h"
 
 /* ---- LED Definitions ----------------------------------------------------- */
 
@@ -85,6 +86,9 @@ static int  mqtt_connected;
 static volatile int esp_cmd, esp_result;
 static struct rt_semaphore esp_go_sem;
 static struct rt_semaphore esp_done_sem;
+
+static int        autopub_enabled = AUTO_PUB_ENABLE;
+static rt_tick_t  last_autopub;
 
 /* ---- Forward Declarations ------------------------------------------------ */
 
@@ -334,7 +338,7 @@ static void oled_thread_entry(void *param)
 
 static const char *shell_cmds[] = {
     "help", "temp", "humi", "light", "dist", "stat",
-    "led on", "led off", "snake", NULL
+    "led on", "led off", "snake", "autopub", NULL
 };
 
 static void shell_thread_entry(void *param)
@@ -465,7 +469,7 @@ static void shell_thread_entry(void *param)
             hist_cur = 0;
 
             /* ---- command dispatch ---- */
-            if      (!strcmp(cmd, "help")) uart_puts("help temp humi light dist stat led on|off snake\r\nwifi SSID PWD   mqtt IP PORT ID   connect   mqttconn\r\npub   sub TOPIC   unsub TOPIC\r\n");
+            if      (!strcmp(cmd, "help")) uart_puts("help temp humi light dist stat led on|off snake autopub\r\nwifi SSID PWD   mqtt IP PORT ID   connect   mqttconn\r\npub   sub TOPIC   unsub TOPIC\r\n");
             else if (!strcmp(cmd, "stat")) {
                 rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
                 struct SensorData local = sensor_data;
@@ -507,6 +511,10 @@ static void shell_thread_entry(void *param)
             }
             else if (!strcmp(cmd, "led on"))  { auto_mode = 1; cur_led = 0; all_leds_off(); uart_puts("ok\r\n"); }
             else if (!strcmp(cmd, "led off")) { auto_mode = 0; cur_led = 0; all_leds_off(); uart_puts("ok\r\n"); }
+            else if (!strcmp(cmd, "autopub")) {
+                autopub_enabled = !autopub_enabled;
+                uart_puts(autopub_enabled ? "autopub ON\r\n" : "autopub OFF\r\n");
+            }
             else if (!strcmp(cmd, "snake"))  { snake_init(); game_mode = 1; g_serial_snake = 1; uart_puts("WASD=move Enter=end Ctrl+C=abort\r\n"); }
             else if (!strncmp(cmd, "wifi ", 5)) {
                 char *sp = strchr(cmd + 5, ' ');
@@ -640,7 +648,6 @@ static void esp_thread_entry(void *param)
             esp_result = ESP8266_MqttPub(mqtt_topic, (uint8_t*)"hello", 5);
         }
         else if (cmd == 6) {
-            /* background: scan for +MQTTSUBRECV and auto-print */
             const char *b = esp_get_buf();
             int len = esp_get_buf_len();
             if (len > 0) {
@@ -657,6 +664,25 @@ static void esp_thread_entry(void *param)
                         }
                     }
                     esp_clear_buf();
+                }
+            }
+
+            if (autopub_enabled && mqtt_connected == 2) {
+                rt_tick_t now = rt_tick_get();
+                if (now - last_autopub >= rt_tick_from_millisecond(AUTOPUB_INTERVAL_S * 1000UL)) {
+                    last_autopub = now;
+                    rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
+                    struct SensorData local = sensor_data;
+                    rt_mutex_release(&sensor_mutex);
+                    char payload[128];
+                    int t_i = (int)local.temp, t_d = (int)((local.temp - t_i) * 10 + 0.5f);
+                    int h_i = (int)local.humi, h_d = (int)((local.humi - h_i) * 10 + 0.5f);
+                    if (t_d >= 10) { t_i++; t_d -= 10; }
+                    if (h_d >= 10) { h_i++; h_d -= 10; }
+                    snprintf(payload, sizeof(payload),
+                        "t=%d.%d h=%d.%d l=%u d=%u",
+                        t_i, t_d, h_i, h_d, local.light, local.distance);
+                    ESP8266_MqttPub("sensor/data", (uint8_t*)payload, strlen(payload));
                 }
             }
             continue;  /* don't release done_sem for background check */
@@ -802,6 +828,94 @@ int main(void)
     if (tid) rt_thread_startup(tid);
     tid = rt_thread_create("game",  game_thread_entry,   RT_NULL, 640,   9, 10);
     if (tid) rt_thread_startup(tid);
+
+#if AUTO_WIFI_ENABLE
+    if (AUTO_WIFI_SSID[0] != '\0') {
+        int ok = 1;
+        rt_mutex_take(&i2c_mutex, RT_WAITING_FOREVER);
+        ssd1306_Fill(Black);
+        ssd1306_SetCursor(10, 24);
+        ssd1306_WriteString("Auto WiFi...", Font_11x18, White);
+        ssd1306_UpdateScreen(&hi2c1);
+        rt_mutex_release(&i2c_mutex);
+
+        strcpy(mqtt_ssid, AUTO_WIFI_SSID);
+        strcpy(mqtt_pwd, AUTO_WIFI_PWD);
+        esp_cmd = 1;
+        rt_sem_release(&esp_go_sem);
+        if (rt_sem_take(&esp_done_sem, AUTO_TIMEOUT_WIFI) != RT_EOK || esp_result != 0)
+            ok = 0;
+
+        rt_mutex_take(&i2c_mutex, RT_WAITING_FOREVER);
+        ssd1306_Fill(Black);
+        ssd1306_SetCursor(10, 24);
+        ssd1306_WriteString(ok ? "WiFi OK!" : "WiFi FAIL", Font_11x18, White);
+        ssd1306_UpdateScreen(&hi2c1);
+        rt_mutex_release(&i2c_mutex);
+        rt_thread_mdelay(ok ? 500 : 1500);
+
+        if (!ok) goto boot_done;
+
+#if AUTO_MQTT_ENABLE
+        if (AUTO_MQTT_IP[0] != '\0') {
+            ok = 1;
+            rt_mutex_take(&i2c_mutex, RT_WAITING_FOREVER);
+            ssd1306_Fill(Black);
+            ssd1306_SetCursor(8, 24);
+            ssd1306_WriteString("Auto MQTT...", Font_11x18, White);
+            ssd1306_UpdateScreen(&hi2c1);
+            rt_mutex_release(&i2c_mutex);
+
+            strcpy(mqtt_broker, AUTO_MQTT_IP);
+            strcpy(mqtt_port,   AUTO_MQTT_PORT);
+            strcpy(mqtt_client, AUTO_MQTT_CLIENT);
+            esp_cmd = 2;
+            rt_sem_release(&esp_go_sem);
+            if (rt_sem_take(&esp_done_sem, AUTO_TIMEOUT_MQTT) != RT_EOK || esp_result != 0)
+                ok = 0;
+
+            rt_mutex_take(&i2c_mutex, RT_WAITING_FOREVER);
+            ssd1306_Fill(Black);
+            ssd1306_SetCursor(8, 24);
+            ssd1306_WriteString(ok ? "MQTT OK!" : "MQTT FAIL", Font_11x18, White);
+            ssd1306_UpdateScreen(&hi2c1);
+            rt_mutex_release(&i2c_mutex);
+            rt_thread_mdelay(ok ? 500 : 1500);
+
+            if (!ok) goto boot_done;
+        }
+#endif
+
+#if AUTO_SUB_ENABLE
+        if (AUTO_SUB_TOPIC[0] != '\0') {
+            rt_mutex_take(&i2c_mutex, RT_WAITING_FOREVER);
+            ssd1306_Fill(Black);
+            ssd1306_SetCursor(5, 24);
+            ssd1306_WriteString("Auto Sub...", Font_11x18, White);
+            ssd1306_UpdateScreen(&hi2c1);
+            rt_mutex_release(&i2c_mutex);
+
+            strcpy(mqtt_topic, AUTO_SUB_TOPIC);
+            esp_cmd = 4;
+            rt_sem_release(&esp_go_sem);
+            ok = (rt_sem_take(&esp_done_sem, AUTO_TIMEOUT_SUB) == RT_EOK && esp_result == 0);
+
+            rt_mutex_take(&i2c_mutex, RT_WAITING_FOREVER);
+            ssd1306_Fill(Black);
+            ssd1306_SetCursor(5, 24);
+            ssd1306_WriteString(ok ? "Sub OK!" : "Sub FAIL", Font_11x18, White);
+            ssd1306_UpdateScreen(&hi2c1);
+            rt_mutex_release(&i2c_mutex);
+            rt_thread_mdelay(500);
+        }
+#endif
+    }
+boot_done:
+    rt_mutex_take(&i2c_mutex, RT_WAITING_FOREVER);
+    ssd1306_Fill(Black);
+    ssd1306_UpdateScreen(&hi2c1);
+    rt_mutex_release(&i2c_mutex);
+#endif
 
     while (1) rt_thread_mdelay(1000);
     return RT_EOK;
