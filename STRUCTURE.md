@@ -19,7 +19,7 @@ Project-rttnano/
 │   │   └── rtconfig.h              # RTT-Nano 内核配置
 │   │   └── net_auto_config.h         # 网络自动配置 (由 make menuconfig 生成)
 │   └── Src/
-│       ├── main.c                  # RTT 应用入口 (7 个线程)
+│       ├── main.c                  # RTT 应用入口 (6 个线程)
 │       ├── board.c                 # RTT 板级初始化 (HAL + 时钟 + SysTick + 堆)
 │       ├── gpio.c                  # GPIO 初始化 (LED / 按键)
 │       ├── i2c.c                   # I2C1 初始化 + MSP (PB8=SCL, PB9=SDA, 100kHz, remap)
@@ -69,10 +69,10 @@ Project-rttnano/
 
 | 引脚 | 模式 | 外设 | 说明 |
 |------|------|------|------|
-| PB13 | OUT PP | LED1 | 流水灯 |
-| PB14 | OUT PP | LED2 | 流水灯 |
-| PB15 | OUT PP | LED3 | 流水灯 |
-| PA8  | OUT PP | LED4 | 流水灯 |
+| PB13 | OUT PP | LED1 | 表情灯 (think 流水, happy/sad 全亮) |
+| PB14 | OUT PP | LED2 | 表情灯 |
+| PB15 | OUT PP | LED3 | 表情灯 |
+| PA8  | OUT PP | LED4 | 表情灯 |
 | PB10 | IN PU | K1_LEFT | 按键 / 蛇左 |
 | PB0  | IN PU | K2_RIGHT | 按键 / 蛇右 |
 | PB11 | IN PU | K3_UP | 按键 / 蛇上 / 进游戏 |
@@ -97,12 +97,11 @@ Project-rttnano/
 | 线程 | 栈 | 优先级 | 职责 |
 |------|------|-------|------|
 | sens | 768B | 8 | DHT11(800ms) + ADC + SR04 → 黑板写入 |
-| keys | 384B | 10 | 按键扫描 + 游戏输入 + 模式切换 |
-| led | 512B | 11 | LED 动画 (sem 打断) |
+| keys | 384B | 10 | 按键扫描 + 蛇方向 / 启动 |
 | oled | 896B | 12 | 黑板读取 + OLED 三行显示 |
 | shell | 1024B | 13 | UART 命令解析 (历史) |
 | esp | 896B | 14 | WiFi/MQTT 异步 worker + 轮询收包 + 自动发布 |
-| game | 640B | 9 | 贪吃蛇 (MAX7219) |
+| game | 640B | 9 | 贪吃蛇 + 表情显示 + LED 控制 (MAX7219) |
 
 ## 架构设计
 
@@ -114,11 +113,14 @@ sensor_thread (prio 8)  → sensor_data (sensor_mutex) → oled_thread (prio 12)
                           未来: MQTT 消费者 (prio 14)
 ```
 
-### 信号量驱动动画
+### 表情黑板 (Shell/MQTT → game_thread)
 
 ```
-key_thread → key_sem → led_thread (rt_sem_take timeout, 零空转)
+shell / MQTT subexec  → face_mode (face_mutex)  → game_thread (prio 9)
+     (producer)                                       (consumer: MAX7219 + LED)
 ```
+
+表情模式: IDLE (笑脸) / THINK (点阵 think1⇄2 + LED 流水) / HAPPY (笑脸点阵 + LED 全亮) / SAD (不开心点阵 + LED 全亮)
 
 ### ESP8266 异步架构
 
@@ -144,8 +146,10 @@ K5=退出
 ```
 help                  # 帮助
 stat                  # 多行仪表盘 (传感器 + WiFi/MQTT 状态 + 订阅 + toggles)
-led on|off            # LED 动画开关
 snake                 # 贪吃蛇 (WASD 方向, Enter 结束)
+happy                 # 点阵笑脸, LED 全亮
+sad                   # 点阵不开心, LED 全亮
+think                 # 点阵 think1⇄2 交替 + LED 流水
 autopub               # 切换后台自动发布
 subecho               # 切换 MQTT 订阅消息转发到终端 (需 AUTO_SUB_ECHO=y)
 subexec               # 切换 MQTT 订阅消息注入 Shell 执行 (需 AUTO_SUB_EXEC=y)
@@ -167,14 +171,15 @@ test TOPIC            # 发送 "hello" 调试
 1. **黑板模式** — 共享 SensorData + mutex + sem，支持多消费者
 2. **DHT11 无锁** — 超时保护替代关中断，SysTick 可打断，~4% 误读由 800ms 高频补偿
 3. **DWT 微秒延时** — Cortex-M3 周期计数器，零外设依赖
-4. **信号量替代轮询** — `rt_sem_take(timeout)` 代替 `delay_yield`、`rt_sem` 握手代替 `esp_cmd` 轮询
-5. **非阻塞按键** — 下降沿检测 + debounce 状态机，多键并发
-6. **I2C1 remap** — PB8/PB9，STM32F103 重映射
-7. **MAX7219 软 SPI** — 寄存器直写 (BSRR/BRR)，免硬件 SPI 冲突
-8. **ESP8266 异步** — 配置/动作分离，信号量握手，终端零阻塞；空闲时轮询 MQTT 收包、自动发布
-9. **MQTT 接收自动打印** — esp 线程轮询 +MQTTSUBRECV，可切换 subecho/subexec 模式
-10. **WaitResponse 容忍订阅流** — 每 2ms 重试替代静默等待，订阅消息不干扰 AT 命令
-11. **mqtt 线程合并** — 原独立 mqtt 线程并入 esp 线程，减少线程切换开销
+4. **表情黑板** — Shell/MQTT 写入 face_mode + mutex，game_thread 空闲时读取显示，解耦命令与渲染
+5. **信号量替代轮询** — `rt_sem_take(timeout)` 代替 `delay_yield`、`rt_sem` 握手代替 `esp_cmd` 轮询
+6. **非阻塞按键** — 下降沿检测 + debounce 状态机，多键并发
+7. **I2C1 remap** — PB8/PB9，STM32F103 重映射
+8. **MAX7219 软 SPI** — 寄存器直写 (BSRR/BRR)，免硬件 SPI 冲突
+9. **ESP8266 异步** — 配置/动作分离，信号量握手，终端零阻塞；空闲时轮询 MQTT 收包、自动发布
+10. **MQTT 接收自动打印** — esp 线程轮询 +MQTTSUBRECV，可切换 subecho/subexec 模式
+11. **WaitResponse 容忍订阅流** — 每 2ms 重试替代静默等待，订阅消息不干扰 AT 命令
+12. **mqtt 线程合并** — 原独立 mqtt 线程并入 esp 线程，减少线程切换开销
 
 ## 外设模块
 
