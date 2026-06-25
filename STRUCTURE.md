@@ -99,11 +99,10 @@ Project-rttnano/
 | sens | 768B | 8 | DHT11(800ms) + ADC + SR04 → 黑板写入 |
 | keys | 384B | 10 | 按键扫描 + 游戏输入 + 模式切换 |
 | led | 512B | 11 | LED 动画 (sem 打断) |
-| oled | 1024B | 12 | 黑板读取 + OLED 三行显示 |
-| shell | 768B | 13 | UART 命令解析 (历史/补全) |
-| esp | 1024B | 14 | WiFi/MQTT 异步 worker (sem 握手) |
+| oled | 896B | 12 | 黑板读取 + OLED 三行显示 |
+| shell | 1024B | 13 | UART 命令解析 (历史) |
+| esp | 896B | 14 | WiFi/MQTT 异步 worker + 轮询收包 + 自动发布 |
 | game | 640B | 9 | 贪吃蛇 (MAX7219) |
-| mqtt | 1024B | 14 | ESP8266 AT 命令 worker |
 
 ## 架构设计
 
@@ -126,10 +125,10 @@ key_thread → key_sem → led_thread (rt_sem_take timeout, 零空转)
 ```
 shell (13) ──wifi/connect/mqtt/pub──→ esp_go_sem → esp_thread (14)
    │                                                     │
-   └── esp_done_sem ← 阻塞等待结果 ←─────────────── 执行 AT 命令
+   └── esp_done_sem ← 阻塞等待结果 ←─────────────── AT命令 + MQTT轮询 + AutoPub
 ```
 
-命令分离：`wifi` 仅保存凭据，`connect` 触发连接。每步阻塞等待结果（带超时），不污染终端。
+命令分离：`wifi` 仅保存凭据，`connect` 触发连接。每步阻塞等待结果（带超时）。esp 线程空闲时轮询 MQTT 收包（subecho/subexec/autopub），不污染终端。
 
 ### 游戏状态机
 
@@ -144,10 +143,12 @@ K5=退出
 
 ```
 help                  # 帮助
-temp / humi / light   # 传感器单项查询
-dist                  # 超声波距离
-stat                  # 全部数据 + ESP 状态码
+stat                  # 多行仪表盘 (传感器 + WiFi/MQTT 状态 + 订阅 + toggles)
 led on|off            # LED 动画开关
+snake                 # 贪吃蛇 (WASD 方向, Enter 结束)
+autopub               # 切换后台自动发布
+subecho               # 切换 MQTT 订阅消息转发到终端 (需 AUTO_SUB_ECHO=y)
+subexec               # 切换 MQTT 订阅消息注入 Shell 执行 (需 AUTO_SUB_EXEC=y)
 
 wifi SSID PWD         # 保存 AP 凭据
 connect               # WiFi 连接 (阻塞 25s)
@@ -155,10 +156,10 @@ mqtt IP PORT ID       # 保存 MQTT 配置
 mqttconn              # MQTT 连接 (阻塞 15s)
 pub                   # 发送传感器数据
 sub TOPIC             # 订阅主题 (后台自动打印)
-unsub TOPIC           # 取消订阅
+unsub                 # 取消当前订阅
 test TOPIC            # 发送 "hello" 调试
 
-↑↓ 浏览历史, Tab 补全
+↑↓ 浏览历史
 ```
 
 ## 关键设计决策
@@ -170,9 +171,10 @@ test TOPIC            # 发送 "hello" 调试
 5. **非阻塞按键** — 下降沿检测 + debounce 状态机，多键并发
 6. **I2C1 remap** — PB8/PB9，STM32F103 重映射
 7. **MAX7219 软 SPI** — 寄存器直写 (BSRR/BRR)，免硬件 SPI 冲突
-8. **ESP8266 异步** — 配置/动作分离，信号量握手，终端零阻塞
-9. **MQTT 接收自动打印** — esp 线程轮询 +MQTTSUBRECV，输出到终端
+8. **ESP8266 异步** — 配置/动作分离，信号量握手，终端零阻塞；空闲时轮询 MQTT 收包、自动发布
+9. **MQTT 接收自动打印** — esp 线程轮询 +MQTTSUBRECV，可切换 subecho/subexec 模式
 10. **WaitResponse 容忍订阅流** — 每 2ms 重试替代静默等待，订阅消息不干扰 AT 命令
+11. **mqtt 线程合并** — 原独立 mqtt 线程并入 esp 线程，减少线程切换开销
 
 ## 外设模块
 
@@ -217,7 +219,8 @@ make                      # 直接编译 (头文件已是最新)
 运行时命令：
 - `autopub` — 切换后台弱周期自动发布 (每 N 秒, N 由 menuconfig 配置)
 - `subecho` — 切换 MQTT 订阅消息转发到终端 (仅在 `AUTO_SUB_ECHO=y` 时编译)
-- `sublist` — 显示当前订阅的 topic
+- `subexec` — 切换 MQTT 订阅消息注入 Shell 执行 (仅在 `AUTO_SUB_EXEC=y` 时编译)
+- `stat` — 显示所有传感器数据、WiFi/MQTT 状态、订阅和 toggle 开关
 - 手动 `wifi` / `connect` / `mqtt` / `mqttconn` / `sub` / `pub` 始终可用
 
 预编译控制：`#if AUTO_XXX` 宏在功能禁用时完全消除代码 (WiFi/MQTT/Sub/SubEcho)，零 flash/RAM 开销。
