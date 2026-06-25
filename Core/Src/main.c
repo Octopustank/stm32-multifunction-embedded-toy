@@ -4,9 +4,9 @@
  * Architecture (Blackboard Pattern):
  *   sensor_thread (prio 8)  → sensor_data (mutex) ← oled_thread (prio 12)
  *                                   ↕ semaphore
- *                            future: mqtt_thread
  *
- *   key_thread (prio 10)   → key_sem  → led_thread (prio 11)
+ *   shell / MQTT           → face_mode (mutex)  ← game_thread (prio 9)
+ *     (producer)                                    (consumer: MAX7219 + LEDs)
  *
  * Startup flow:
  *   startup.s → entry() → rtthread_startup() → main()
@@ -43,10 +43,6 @@ static const LED_t leds[] = {
 };
 #define LED_NUM    (sizeof(leds) / sizeof(leds[0]))
 
-#define WATERFALL_DELAY    300
-#define BLINK_DELAY        250
-#define CYCLE_COUNT          2
-
 #define LED_ON    GPIO_PIN_RESET
 #define LED_OFF   GPIO_PIN_SET
 
@@ -64,12 +60,16 @@ static struct SensorData     sensor_data;
 static struct rt_mutex       sensor_mutex;
 static struct rt_mutex       i2c_mutex;
 static struct rt_semaphore   sensor_sem;   /* notify OLED consumer */
-static struct rt_semaphore   key_sem;      /* CENTER key → LED thread */
 
-/* ---- Thread State -------------------------------------------------------- */
+/* ---- Face Blackboard ------------------------------------------------------ */
 
-static int auto_mode = 1;
-static int cur_led   = 0;
+#define FACE_IDLE   0
+#define FACE_THINK  1
+#define FACE_HAPPY  2
+#define FACE_SAD    3
+
+static int         face_mode = FACE_IDLE;
+static struct rt_mutex face_mutex;
 
 /* ---- Game State ---------------------------------------------------------- */
 
@@ -100,7 +100,6 @@ static rt_tick_t  last_autopub;
 
 /* ---- Forward Declarations ------------------------------------------------ */
 
-static void led_thread_entry(void *param);
 static void key_thread_entry(void *param);
 static void sensor_thread_entry(void *param);
 static void oled_thread_entry(void *param);
@@ -114,12 +113,6 @@ static void all_leds_off(void)
 {
     for (uint8_t i = 0; i < LED_NUM; i++)
         HAL_GPIO_WritePin(leds[i].port, leds[i].pin, LED_OFF);
-}
-
-static void set_led(uint8_t idx)
-{
-    all_leds_off();
-    HAL_GPIO_WritePin(leds[idx].port, leds[idx].pin, LED_ON);
 }
 
 /*
@@ -150,57 +143,10 @@ static rt_bool_t key_pressed(GPIO_TypeDef *port, uint16_t pin)
     return RT_FALSE;
 }
 
-/* ---- LED Animations (semaphore-driven) ----------------------------------- */
-
-static rt_bool_t waterfall_once(void)
+static void all_leds_on(void)
 {
-    for (uint8_t i = 0; i < LED_NUM; i++) {
+    for (uint8_t i = 0; i < LED_NUM; i++)
         HAL_GPIO_WritePin(leds[i].port, leds[i].pin, LED_ON);
-        if (rt_sem_take(&key_sem, WATERFALL_DELAY) == RT_EOK) return RT_TRUE;
-        HAL_GPIO_WritePin(leds[i].port, leds[i].pin, LED_OFF);
-    }
-    for (uint8_t i = LED_NUM - 2; i > 0; i--) {
-        HAL_GPIO_WritePin(leds[i].port, leds[i].pin, LED_ON);
-        if (rt_sem_take(&key_sem, WATERFALL_DELAY) == RT_EOK) return RT_TRUE;
-        HAL_GPIO_WritePin(leds[i].port, leds[i].pin, LED_OFF);
-    }
-    return RT_FALSE;
-}
-
-static rt_bool_t blink_all(uint8_t times)
-{
-    for (uint8_t t = 0; t < times; t++) {
-        for (uint8_t i = 0; i < LED_NUM; i++)
-            HAL_GPIO_WritePin(leds[i].port, leds[i].pin, LED_ON);
-        if (rt_sem_take(&key_sem, BLINK_DELAY) == RT_EOK) return RT_TRUE;
-        for (uint8_t i = 0; i < LED_NUM; i++)
-            HAL_GPIO_WritePin(leds[i].port, leds[i].pin, LED_OFF);
-        if (t < times - 1 && rt_sem_take(&key_sem, BLINK_DELAY) == RT_EOK)
-            return RT_TRUE;
-    }
-    if (rt_sem_take(&key_sem, 400) == RT_EOK) return RT_TRUE;
-    return RT_FALSE;
-}
-
-/* ---- LED Thread (prio 11) ------------------------------------------------ */
-
-static void led_thread_entry(void *param)
-{
-    while (1) {
-        if (auto_mode) {
-            rt_bool_t stopped = RT_FALSE;
-            for (uint8_t cycle = 0; cycle < CYCLE_COUNT && !stopped; cycle++)
-                stopped = waterfall_once();
-            if (!stopped) blink_all(2);
-            if (stopped) {
-                auto_mode = 0;
-                cur_led = 0;
-                all_leds_off();
-            }
-        } else {
-            rt_thread_mdelay(50);
-        }
-    }
 }
 
 /* ---- Key Thread (prio 10) ------------------------------------------------ */
@@ -228,30 +174,8 @@ static void key_thread_entry(void *param)
         }
 
         /* ---- normal-mode keys ---- */
-            if (key_pressed(K3_UP_GPIO_Port, K3_UP_Pin))
-                { game_mode = 1; snake_init(); g_serial_snake = 1; continue; }
-        if (key_pressed(K5_CENTER_GPIO_Port, K5_CENTER_Pin)) {
-            if (auto_mode) {
-                rt_sem_release(&key_sem);
-            } else {
-                auto_mode = 1;
-                cur_led = 0;
-                all_leds_off();
-            }
-        }
-        if (!auto_mode) {
-            int8_t key = 0;
-            if (key_pressed(K1_LEFT_GPIO_Port,  K1_LEFT_Pin))  key = 1;
-            if (key_pressed(K2_RIGHT_GPIO_Port, K2_RIGHT_Pin)) key = 2;
-            if (key_pressed(K3_UP_GPIO_Port,    K3_UP_Pin))    key = 3;
-            if (key_pressed(K4_DOWN_GPIO_Port,  K4_DOWN_Pin))  key = 4;
-
-            if (key == 1 || key == 3)
-                cur_led = (cur_led == 0) ? (int)(LED_NUM - 1) : cur_led - 1;
-            if (key == 2 || key == 4)
-                cur_led = (cur_led + 1) % LED_NUM;
-            if (key != 0) set_led((uint8_t)cur_led);
-        }
+        if (key_pressed(K3_UP_GPIO_Port, K3_UP_Pin))
+            { game_mode = 1; snake_init(); g_serial_snake = 1; continue; }
         rt_thread_mdelay(10);
     }
 }
@@ -453,7 +377,7 @@ static void shell_thread_entry(void *param)
             hist_cur = 0;
 
             /* ---- command dispatch ---- */
-            if      (!strcmp(cmd, "help")) uart_puts("help stat led on|off snake autopub subecho subexec\r\nwifi SSID PWD   mqtt IP PORT ID   connect   mqttconn\r\npub   sub TOPIC   unsub\r\n");
+            if      (!strcmp(cmd, "help")) uart_puts("help stat snake happy sad think autopub subecho subexec\r\nwifi SSID PWD   mqtt IP PORT ID   connect   mqttconn\r\npub   sub TOPIC   unsub\r\n");
             else if (!strcmp(cmd, "stat")) {
                 rt_mutex_take(&sensor_mutex, RT_WAITING_FOREVER);
                 struct SensorData local = sensor_data;
@@ -497,8 +421,6 @@ static void shell_thread_entry(void *param)
                     );
                 uart_puts(buf);
             }
-            else if (!strcmp(cmd, "led on"))  { auto_mode = 1; cur_led = 0; all_leds_off(); uart_puts("ok\r\n"); }
-            else if (!strcmp(cmd, "led off")) { auto_mode = 0; cur_led = 0; all_leds_off(); uart_puts("ok\r\n"); }
             else if (!strcmp(cmd, "autopub")) {
                 autopub_enabled = !autopub_enabled;
                 uart_puts(autopub_enabled ? "autopub ON\r\n" : "autopub OFF\r\n");
@@ -515,7 +437,10 @@ static void shell_thread_entry(void *param)
             }
 #endif
 #endif
-            else if (!strcmp(cmd, "snake"))  { snake_init(); game_mode = 1; g_serial_snake = 1; uart_puts("WASD=move Enter=end Ctrl+C=abort\r\n"); }
+            else if (!strcmp(cmd, "happy"))  { rt_mutex_take(&face_mutex, RT_WAITING_FOREVER); face_mode = FACE_HAPPY; rt_mutex_release(&face_mutex); uart_puts("face:happy\r\n"); }
+            else if (!strcmp(cmd, "sad"))    { rt_mutex_take(&face_mutex, RT_WAITING_FOREVER); face_mode = FACE_SAD;   rt_mutex_release(&face_mutex); uart_puts("face:sad\r\n"); }
+            else if (!strcmp(cmd, "think"))  { rt_mutex_take(&face_mutex, RT_WAITING_FOREVER); face_mode = FACE_THINK; rt_mutex_release(&face_mutex); uart_puts("face:think\r\n"); }
+            else if (!strcmp(cmd, "snake"))  { snake_init(); game_mode = 1; g_serial_snake = 1; while (uart_getc() >= 0) {} uart_puts("WASD=move Enter=end Ctrl+C=abort\r\n"); }
             else if (!strncmp(cmd, "wifi ", 5)) {
                 char *sp = strchr(cmd + 5, ' ');
                 if (!sp) { uart_puts("usage: wifi SSID PWD\r\n"); goto prompt; }
@@ -706,30 +631,28 @@ static void esp_thread_entry(void *param)
     }
 }
 
-/* ---- Game Thread (snake on MAX7219) -------------------------------------- */
+/* ---- Game Thread (snake on MAX7219 + face display + LED control) --------- */
 
 static void game_thread_entry(void *param)
 {
-    const uint8_t smiley[8] = {
-        0x00, 0x24, 0x24, 0x00, 0x00, 0x42, 0x3C, 0x00
-    };
-    static int prev_mode = 1;  /* force initial smiley display on boot */
+    const uint8_t smiley[8]  = {0x00,0x24,0x24,0x00,0x00,0x42,0x3C,0x00};
+    const uint8_t think1[8]  = {0xFF,0x81,0xA9,0x89,0x81,0xDD,0xB1,0xFF};
+    const uint8_t think2[8]  = {0xFF,0x81,0xB5,0xB1,0x81,0xDD,0xB1,0xFF};
+    const uint8_t sad_face[8] = {0xFF,0x81,0xA5,0xA5,0x81,0xBD,0x81,0xFF};
+
+    int think_tick = 0, think_frame = 0;
+    int led_tick = 0, led_idx = 0;
+    int last_face = -1;
 
     while (1) {
-        if (!game_mode) {
-            if (prev_mode) { max7219_display(smiley); prev_mode = 0; }
-            rt_thread_mdelay(100);
-            continue;
-        }
-        prev_mode = game_mode;
-
+        /* ---------- snake (highest priority) ---------- */
         if (game_mode == 1) {
-            /* serial input: poll for WASD / arrows / Ctrl+C / Enter */
+            last_face = -1;
             if (g_serial_snake) {
                 int c;
                 while ((c = uart_getc()) >= 0) {
-                    if (c == 0x03)      { game_mode = 0; break; }       /* Ctrl+C */
-                    if (c == '\r' || c == '\n') { game_mode = 0; break; }
+                    if (c == 0x03 || c == '\r' || c == '\n')
+                        { game_mode = 0; break; }
                     if (c == 'w' || c == 'W') g_dir = DIR_UP;
                     if (c == 's' || c == 'S') g_dir = DIR_DOWN;
                     if (c == 'a' || c == 'A') g_dir = DIR_LEFT;
@@ -737,19 +660,16 @@ static void game_thread_entry(void *param)
                 }
                 if (!game_mode) { g_serial_snake = 0; continue; }
             }
-
             snake_tick(g_dir);
             g_dir = DIR_NONE;
-
             uint8_t rows[8];
             snake_get_display(rows);
             max7219_display(rows);
-
+            all_leds_off();
             if (snake_is_dead()) game_mode = 2;
             rt_thread_mdelay(snake_get_speed_ms());
             continue;
         }
-
         if (game_mode == 2) {
             const uint8_t all[8]  = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
             const uint8_t none[8] = {0,0,0,0,0,0,0,0};
@@ -759,8 +679,52 @@ static void game_thread_entry(void *param)
                 if (game_mode != 2) break;
                 max7219_display(none); rt_thread_mdelay(150);
             }
-            if (i >= 3) game_mode = 0;  /* auto-exit after 3 blinks */
+            if (game_mode == 2) game_mode = 0;
+            all_leds_off();
             continue;
+        }
+
+        /* ---------- face display (idle / expression mode) ---------- */
+        int face = FACE_IDLE;
+        rt_mutex_take(&face_mutex, RT_WAITING_FOREVER);
+        face = face_mode;
+        rt_mutex_release(&face_mutex);
+
+        int changed = (face != last_face);
+        last_face = face;
+
+        if (changed) {
+            think_tick = 0; think_frame = 0;
+            led_tick = 0; led_idx = 0;
+        }
+
+        switch (face) {
+        case FACE_THINK:
+            if (++think_tick >= 5) {
+                think_tick = 0;
+                think_frame = !think_frame;
+                max7219_display(think_frame ? think2 : think1);
+            }
+            if (++led_tick >= 1) {
+                led_tick = 0;
+                led_idx = (led_idx + 1) % LED_NUM;
+                all_leds_off();
+                HAL_GPIO_WritePin(leds[led_idx].port, leds[led_idx].pin, LED_ON);
+            }
+            rt_thread_mdelay(100);
+            break;
+        case FACE_HAPPY:
+            if (changed) { max7219_display(smiley); all_leds_on(); }
+            rt_thread_mdelay(100);
+            break;
+        case FACE_SAD:
+            if (changed) { max7219_display(sad_face); all_leds_on(); }
+            rt_thread_mdelay(100);
+            break;
+        default: /* FACE_IDLE */
+            if (changed) { max7219_display(smiley); all_leds_off(); }
+            rt_thread_mdelay(100);
+            break;
         }
     }
 }
@@ -796,9 +760,9 @@ int main(void)
     rt_mutex_init(&sensor_mutex, "s_mtx", RT_IPC_FLAG_FIFO);
     rt_mutex_init(&i2c_mutex,    "i_mtx", RT_IPC_FLAG_FIFO);
     rt_sem_init(&sensor_sem, "s_sem", 0, RT_IPC_FLAG_FIFO);
-    rt_sem_init(&key_sem,    "k_sem", 0, RT_IPC_FLAG_FIFO);
     rt_sem_init(&esp_go_sem, "e_go",  0, RT_IPC_FLAG_FIFO);
     rt_sem_init(&esp_done_sem,"e_done",0, RT_IPC_FLAG_FIFO);
+    rt_mutex_init(&face_mutex, "f_mtx", RT_IPC_FLAG_FIFO);
 
     /* splash screen */
     ssd1306_Fill(Black);
@@ -831,8 +795,6 @@ int main(void)
     tid = rt_thread_create("sens", sensor_thread_entry, RT_NULL, 768,  8, 10);
     if (tid) rt_thread_startup(tid);
     tid = rt_thread_create("oled", oled_thread_entry,   RT_NULL, 896,  12, 10);
-    if (tid) rt_thread_startup(tid);
-    tid = rt_thread_create("led",  led_thread_entry,    RT_NULL, 512,  11, 10);
     if (tid) rt_thread_startup(tid);
     tid = rt_thread_create("keys", key_thread_entry,    RT_NULL, 384,  10, 10);
     if (tid) rt_thread_startup(tid);
