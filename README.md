@@ -4,6 +4,12 @@
 
 STM32F103C8T6 (Cortex-M3, 64KB Flash, 20KB RAM) — RT-Thread Nano + STM32 HAL
 
+<img src="./Pics/physical_object.jpg" alt="实物图" style="zoom: 25%;" />
+
+<img src="./Pics/UartTerminal_RTT_Boot.png" alt="终端交互" style="zoom:25%;" />
+
+<img src="./Pics/APP_MQTTmsg.jpg" alt="鸿蒙原生APP进行调试" style="zoom:20%;" />
+
 ## 目录总览
 
 ```
