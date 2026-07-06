@@ -13,3 +13,16 @@ build/
 compile_commands.json
 .config
 .config.old
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.cproject
+.settings/
+
+# clangd cache
+.cache/
