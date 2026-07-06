@@ -1,5 +1,7 @@
 # Project-rttnano 项目结构
 
+> 使用 HarmonyOS 原生应用进行 MQTT 调试：https://github.com/Octopustank/HarmonyMQTT
+
 STM32F103C8T6 (Cortex-M3, 64KB Flash, 20KB RAM) — RT-Thread Nano + STM32 HAL
 
 ## 目录总览
